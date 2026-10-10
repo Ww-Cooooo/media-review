@@ -1,0 +1,44 @@
+.film-desk{--paper:#fff9ee;--paper-line:#e4d6ca;--ink:#381d2d;--deck:#351424;--deck-deep:#21121b;--deck-line:#704054;--signal:#efbd78;--signal-strong:#922b50;color:#381d2d;background:#eee8e2}
+.film-desk .topbar{background:#fff9ee;border-bottom-color:#e0cdbc;padding:16px clamp(24px,3vw,64px)}
+.film-desk .brand-mark-dot{background:#a93962}.film-desk .brand-rule{background:#caaea9}
+.film-desk .brand-eyebrow,.film-desk .section-kicker{color:#965567}
+.film-desk .save-indicator{color:#7d605c}.film-desk .save-indicator:before{background:#b87d83}
+.film-desk .save-indicator.unsaved:before{background:#dc9c40}.film-desk .save-indicator.save-failed{color:#a54029}
+.film-desk .workspace{display:flex;flex-direction:column;max-width:2240px;margin:0 auto;min-height:calc(100vh - 80px);padding:24px clamp(16px,2.5vw,48px);gap:24px}
+.film-desk .work-main{padding:26px clamp(20px,2.5vw,52px) 20px;border-radius:20px;border:1px solid #6c3e4f;background:radial-gradient(ellipse at 50% 35%,#7e2949 0%,#351424 58%,#21121b 100%);box-shadow:0 20px 45px #34132325;color:#fff1e4}
+.film-desk .media-head{margin-bottom:16px}.film-desk .media-head h2{color:#fff1e4;font-size:clamp(23px,2.3vw,38px);max-width:min(70vw,1450px);letter-spacing:-.035em}
+.film-desk .media-head .section-kicker{color:#d89aa9}.film-desk .media-meta{color:#dfb6b5}
+.film-desk .mark-toolbar .ant-btn{color:#f6d9d0;background:#402031;border-color:#976073}
+.film-desk .mark-toolbar .ant-btn-primary{color:#4d2434;background:#f6c67f;border-color:#ffdeaf;box-shadow:3px 3px 0 #8c493e}
+.film-desk .mark-toolbar>span{color:#d7b4b6}
+.film-desk .film-media .media-stage{height:100%;background:none;overflow:visible;border:0}
+.film-desk .transport{border-color:#815269;padding-top:16px}.film-desk .transport-time strong{color:#ffe7cd}.film-desk .transport-time span{color:#cbabad}
+.film-desk .transport .play-button.ant-btn-primary{background:#f6c67f;color:#512536}
+.film-desk .seek-group .ant-btn,.film-desk .timeline-tools .ant-btn{background:#432837;border-color:#805169;color:#ffe7cd}
+.film-desk .speed-select .ant-select-selector{background:#432837!important;border-color:#805169!important;color:#ffe7cd!important}
+.film-desk .timeline-panel{background:#281721;border-color:#77505e;border-radius:12px;margin-top:14px}
+.film-desk .timeline-top,.film-desk .timeline-tools,.film-desk .timeline-scale{color:#caa9ad}.film-desk .timeline-top strong{color:#ffe7cd}
+.film-desk .timeline-track{background:repeating-linear-gradient(90deg,#e4cbb914 0 1px,transparent 1px 5%),#21141d;border-color:#694452}
+.film-desk .timeline-wave-label{color:#ceadb0}.film-desk .timeline-wave span{background:#ad8090}.film-desk .timeline-wave span.heard{background:#e3b69c}
+.film-desk .timeline-selection{border-color:#efbd78;background:#efbd7825;box-shadow:inset 0 0 0 1px #efbd7833}
+.film-desk .timeline-track:before{background:linear-gradient(90deg,#efbd78 var(--progress),#65404e var(--progress))}
+.film-desk .timeline-track input[type=range]::-webkit-slider-thumb{background:#a93962;border-color:#f6ce92}
+.film-desk .timeline-note{border-color:#281721}.film-desk .media-footnote{color:#c49ca7}
+.film-desk .frame-strip{background:transparent;border-color:#6f4354}.film-desk .frame-strip__head strong{color:#f3d3bb}.film-desk .frame-strip__head span,.film-desk .frame-strip__message,.film-desk .frame-strip__hint{color:#c19ca8}
+.film-desk .frame-strip__list{background:#251820;border-color:#694452}
+.film-desk .frame-strip__frame{background:#3a2430;border-color:#805169;color:#f3d3bb}
+.film-desk .frame-strip__frame.is-current{background:#64374a;border-color:#efbd78;box-shadow:0 0 0 1px #efbd78}
+.film-desk .frame-strip__frame img{background:#16101a}.film-desk .frame-strip__frame span{font-size:11px}
+.film-desk .review-side{max-height:none;width:100%;border:1px solid #dac7bc;border-radius:14px;background:#fff9ee;overflow:hidden;box-shadow:0 8px 30px #4022310a}
+.film-desk .side-head{background:#fff9ee;padding:22px 28px 16px}.film-desk .side-head h2{color:#742847}.film-desk .side-head p{color:#846b6b}
+.film-desk .side-view-switch{background:#fff9ee;padding:12px 28px 14px}.film-desk .side-switch-track{left:28px;right:28px}.film-desk .side-switch-indicator{background:#a93962}
+.film-desk .side-notes-content{display:block}.film-desk .notes-list{max-height:460px;padding:0 28px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:12px;align-items:start}
+.film-desk .note-card{margin:0;box-shadow:none}.film-desk .note-card.selected{border-color:#a93962;box-shadow:0 0 0 2px #a9396222}
+.film-desk .side-bottom{background:#fff9ee;padding:18px 28px}.film-desk .side-bottom>.save-button{width:auto;min-width:180px}
+.film-desk .side-transcript-content{max-height:520px;padding:20px 28px}.film-desk .notes-head{padding-inline:28px}
+.film-desk .compare-disclosure{background:#2c1c28;border-color:#795165}.film-desk .compare-disclosure summary{color:#ffe7cd}.film-desk .compare-disclosure summary span{color:#c7a2ae}
+.film-desk .empty-workspace{max-width:none;margin:30px clamp(16px,4vw,70px);min-height:calc(100vh - 160px);padding:70px clamp(26px,6vw,110px);border:1px solid #764257;border-radius:20px;background:radial-gradient(ellipse at 70% 45%,#7e2949,#351424 62%,#21121b);color:#fff1e4}
+.film-desk .empty-kicker{color:#e3b09e}.film-desk .empty-workspace h2{font-size:clamp(38px,5vw,74px);letter-spacing:-.04em}
+.film-desk .empty-workspace p,.film-desk .empty-footnote{color:#d3acb2}.film-desk .empty-workspace .ant-btn-primary{background:#f6c67f;border-color:#f6c67f;color:#512536;font-weight:700}
+.film-desk .work-main .ant-btn:focus-visible{outline-color:#f6c67f}
+@media(max-width:820px){.film-desk .workspace{padding:14px 10px;gap:16px}.film-desk .work-main{padding:20px 14px}.film-desk .media-head h2{max-width:calc(100vw - 80px)}.film-desk .side-transcript-content{padding:16px}.film-desk .side-switch-track{left:28px;right:28px}.film-desk .side-head .mobile-flow-button.ant-btn{color:#922b50}.film-desk .media-head .mobile-flow-button.ant-btn{color:#f6c67f}.film-desk .notes-list{padding-inline:18px}.film-desk .film-media .media-stage{height:100%}}

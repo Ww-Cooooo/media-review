@@ -1,0 +1,35 @@
+{
+  "name": "media-review",
+  "version": "0.3.0-beta.1",
+  "private": true,
+  "description": "本机音视频校对室与Agent主动校对Skill",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc --noEmit && vite build --mode standalone",
+    "start": "node server/open.mjs",
+    "test": "node --test server/*.test.mjs",
+    "build:skill": "node scripts/build-skill.mjs"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.1.0",
+    "@antv/g2": "5.4.8",
+    "@gsap/react": "2.1.2",
+    "antd": "^6.6.2",
+    "fabric": "7.4.0",
+    "gsap": "^3.14.2",
+    "lenis": "1.3.26",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^6.0.0",
+    "vite": "^8.2.0"
+  }
+}

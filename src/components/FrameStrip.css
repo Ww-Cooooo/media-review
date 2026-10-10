@@ -1,0 +1,82 @@
+.frame-strip {
+  margin-top: 16px;
+  padding: 15px 16px 12px;
+  color: #eaf2e8;
+  background: #111c19;
+  border: 1px solid #3d5349;
+  border-radius: 10px;
+}
+
+.frame-strip__head,
+.frame-strip__head > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.frame-strip__head { justify-content: space-between; flex-wrap: wrap; }
+.frame-strip__head strong { font-size: 15px; font-weight: 700; white-space: nowrap; }
+.frame-strip__head span { color: #b2c7b9; font-size: 13px; }
+.frame-strip__head .ant-btn { min-height: 40px; }
+.frame-strip__message { margin: 9px 0 0; color: #bdd1c4; font-size: 13px; line-height: 1.5; }
+.frame-strip__message.is-error { color: #ffbf9a; }
+
+.frame-strip__list {
+  display: flex;
+  gap: 9px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 12px 2px 6px;
+  scrollbar-color: #658575 transparent;
+}
+
+.frame-strip__frame {
+  flex: 0 0 124px;
+  min-height: 113px;
+  padding: 0;
+  border: 1px solid #526b5d;
+  border-radius: 8px;
+  background: #1a2823;
+  color: #edf5ec;
+  text-align: left;
+  overflow: hidden;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+
+.frame-strip__frame:hover,
+.frame-strip__frame:focus-visible { border-color: #b3e6c1; }
+.frame-strip__frame.is-current { border-color: #b3e6c1; background: #294b39; box-shadow: 0 0 0 1px #b3e6c1; }
+.frame-strip__frame img {
+  display: block;
+  width: 100%;
+  height: 76px;
+  object-fit: contain;
+  background: #080e0c;
+}
+.frame-strip__frame span { display: block; padding: 6px 9px 7px; font-family: ReviewDisplay, ReviewSans, sans-serif; font-variant-numeric: tabular-nums; font-size: 13px; line-height: 1.4; }
+.frame-strip__hint { margin: 4px 0 0; color: #a9bbad; font-size: 12px; line-height: 1.5; }
+
+/* The frame index and waveform share the same zoomed review timeline. */
+.timeline-panel .frame-strip { margin: 9px 0 8px; padding: 0; background: transparent; border: 0; }
+.timeline-panel .frame-strip__head strong { font-size: 12px; }
+.timeline-panel .frame-strip__head span { font-size: 11px; }
+.timeline-panel .frame-strip__head .ant-btn { min-height: 28px; height: 28px; font-size: 11px; }
+.timeline-panel .frame-strip__list { position: relative; height: 87px; overflow: hidden; padding: 0; border: 1px solid #405a4b; border-radius: 6px; background: #15231d; }
+.timeline-panel .frame-strip__frame { position: absolute; top: 4px; width: 96px; min-height: 77px; transform: translateX(-50%); border-radius: 4px; }
+.timeline-panel .frame-strip__frame img { height: 55px; object-fit: cover; }
+.timeline-panel .frame-strip__frame span { padding: 1px 5px 2px; font-size: 10px; }
+.timeline-panel .frame-strip__empty { align-self: center; margin: auto; color: #aec4b3; font-size: 12px; }
+.timeline-panel .frame-strip__hint { display: none; }
+
+@media (max-width: 600px) {
+  .frame-strip { padding: 13px 12px 11px; }
+  .frame-strip__head { align-items: flex-start; }
+  .frame-strip__head > div { flex-direction: column; align-items: flex-start; gap: 1px; }
+  .frame-strip__head .ant-btn { min-height: 44px; }
+  .frame-strip__frame { flex-basis: 116px; min-height: 111px; }
+  .timeline-panel .frame-strip__frame { width: 66px; min-height: 76px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame-strip__frame { transition: none; }
+}

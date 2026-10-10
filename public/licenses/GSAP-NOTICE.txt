@@ -1,0 +1,28 @@
+GSAP runtime 与 React 适配许可说明
+
+本工具使用 GSAP 3.15.0（既有依赖）及 @gsap/react 2.1.2。
+二者适用 GreenSock / Webflow Standard “No Charge” License，不是 MIT。
+许可原文：https://gsap.com/standard-license
+核对日期：2026-10-03
+用途：本机音视频审阅工具中的控件与状态反馈，不是无代码网页动画制作器。
+未复制官方演示代码；依赖包原有声明保留。
+
+以下版权声明原样摘自所安装软件包：
+
+/*!
+ * GSAP 3.15.0
+ * https://gsap.com
+ *
+ * @license Copyright 2008-2026, GreenSock. All rights reserved.
+ * Subject to the terms at https://gsap.com/standard-license
+ * @author: Jack Doyle, jack@greensock.com
+*/
+
+/*!
+ * @gsap/react 2.1.2
+ * https://gsap.com
+ *
+ * @license Copyright 2025, GreenSock. All rights reserved.
+ * Subject to the terms at https://gsap.com/standard-license or for Club GSAP members, the agreement issued with that membership.
+ * @author: Jack Doyle, jack@greensock.com
+ */
