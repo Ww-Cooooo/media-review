@@ -1,15 +1,43 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 
-export const UI_REVISION = 'history-20261009-r2';
+export const UI_REVISION = 'lifecycle-20261011-r2';
+export const SERVICE_PROTOCOL = 3;
+export function pathIdentity(value) {
+  const normalized = path.resolve(value).replaceAll('\\', '/');
+  return createHash('sha256').update(process.platform === 'win32' ? normalized.toLowerCase() : normalized).digest('hex');
+}
+
+export class ReviewError extends Error {
+  constructor(message, code = 'review_conflict', status = 409) {
+    super(message); this.code = code; this.status = status;
+  }
+}
+
+// 锁内再次读取、校验再提交；原子rename本身不能防陈旧写覆盖。
+export function keyedSerial() {
+  const tails = new Map();
+  return async (key, action) => {
+    const previous = tails.get(key) ?? Promise.resolve();
+    const pending = previous.catch(() => {}).then(action);
+    tails.set(key, pending);
+    try { return await pending; }
+    finally { if (tails.get(key) === pending) tails.delete(key); }
+  };
+}
+
+export function documentRevision(value) {
+  return value === null ? null : createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
 export async function runtimePaths(root) {
   const marker = path.join(root, 'standalone.json');
   const markerStat = await fs.lstat(marker).catch(cause => { if (cause.code !== 'ENOENT') throw cause; return null; });
   if (markerStat && (!markerStat.isFile() || markerStat.isSymbolicLink())) throw new Error('独立版身份文件无效');
   const standalone = !!markerStat;
   if (standalone && (await readJson(marker, 1024)).format !== 'media-review-standalone/v1') throw new Error('独立版身份不匹配，未改用户数据');
+  if (standalone && process.env.MEDIA_REVIEW_DATA_DIR && !path.isAbsolute(process.env.MEDIA_REVIEW_DATA_DIR)) throw new Error('MEDIA_REVIEW_DATA_DIR必须是绝对路径，避免不同入口误用不同数据根');
   const local = standalone
     ? path.join(process.env.MEDIA_REVIEW_DATA_DIR || path.join(os.homedir(), '.media-review-desk'), 'data')
     : path.resolve(root, '../../.assistant-local/extensions/media-review-desk');

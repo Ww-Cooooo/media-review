@@ -2,15 +2,15 @@ import { Alert } from 'antd';
 import type { ServiceState } from '../lib/use-service-status';
 
 const NOTICE = {
-  reconnecting: { title: '连接中断，正在尝试重连', reason: '连接恢复前，暂时无法确认保存。' },
-  offline: { title: '服务已断开，当前无法保存', reason: '本机校对服务没有响应，需要重新打开校对室。' },
-  incompatible: { title: '连接版本已失效，请重新打开校对室', reason: '当前页面与服务版本不一致，不能继续保存；这不是正常连接状态。' },
-  restarted: { title: '会话已失效，请重新打开校对室', reason: '本机服务已重启，当前旧页面无法确认保存。' },
+  reconnecting: { title: '连接暂慢，正在重新检查', reason: '单次超时不代表进程已停止；连接确认前不能保存。' },
+  offline: { title: '暂时无法连接，当前不能确认保存', reason: '本机服务连续未响应。可能已退出，也可能仍暂不可达；可以从桌面入口核验并按需重开。' },
+  incompatible: { title: '连接身份或版本不匹配，请从当前入口重开', reason: '不会把旧页面直接当作有效编辑会话，也没有覆盖当前输入。' },
+  restarted: { title: '服务已重新出现，正在核验新会话', reason: '核对身份、版本与认证后再恢复编辑；本页输入不清空，保存仍会检查意见版本。' },
 };
 
 export function ServiceNotice({ state }: { state: ServiceState }) {
   if (state === 'online' || state === 'connecting') return null;
-  const notice = NOTICE[state], critical = state !== 'reconnecting';
+  const notice = NOTICE[state], critical = state === 'offline' || state === 'incompatible';
   const entry = '打开 Media Review.cmd';
   return <Alert className={`service-notice service-connection-notice ${critical ? 'is-critical' : 'is-reconnecting'}`} role="alert"
     type={critical ? 'error' : 'warning'} showIcon title={notice.title} description={<>

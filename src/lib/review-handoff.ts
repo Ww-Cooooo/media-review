@@ -6,6 +6,7 @@ export interface ReviewSaveReceipt {
   recordPath: string;
   savedAt: string;
   record: ReviewRecord;
+  revision?: string;
 }
 
 export interface ReviewHandoff {

@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { runTool, ANALYSIS_THREADS } from './tool-runner.mjs';
 import { promisify } from 'node:util';
-import { runtimePaths, readJson, ordinaryDirectory } from './runtime.mjs';
+import { runtimePaths, readJson, ordinaryDirectory, atomicJson, ReviewError, keyedSerial } from './runtime.mjs';
 import { createReadStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
@@ -140,76 +141,82 @@ export async function waveRms(file, targetBars) {
 
 async function runProgram(job, executable, args, timeoutMs, phase, onEvent) {
   if (job.cancelled) throw mediaError('分析已取消。');
-  await new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { windowsHide: true, stdio: ['ignore', phase === 'decoding' ? 'pipe' : 'ignore', 'pipe'] });
-    job.child = child;
-    let stderr = '';
-    let timedOut = false;
-    const decode = progressDecoder(phase, job.durationMs, event => { if (!job.cancelled) onEvent(event); });
-    child.stdout?.on('data', decode);
-    child.stderr.on('data', chunk => {
-      stderr = (stderr + chunk.toString()).slice(-3000);
-      if (phase === 'transcribing') decode(chunk);
-    });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-    child.once('error', () => { clearTimeout(timer); reject(mediaError('本机媒体工具未能启动，请检查当前工具路径。')); });
-    child.once('close', code => {
-      clearTimeout(timer);
-      job.child = null;
-      if (job.cancelled) reject(mediaError('分析已取消。'));
-      else if (timedOut) reject(mediaError(phase === 'transcribing' ? '本机语音识别已超时，可重试；仍可播放和标记。' : '本机音轨处理已超时，可重试。'));
-      else if (code === 0) resolve();
-      else reject(mediaError(stderr.includes('matches no streams') || stderr.includes('does not contain any stream')
-        ? '这段媒体没有可解码的音轨。' : phase === 'transcribing' ? '本机语音识别失败，可重试；不会改动原媒体。' : '本机声音处理失败，请检查媒体编码。'));
-    });
-  });
+  const decode = progressDecoder(phase, job.durationMs, event => { if (!job.cancelled) onEvent(event); });
+  try {
+    await runTool(executable, args, { signal: job.controller.signal, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, onOutput: (chunk, kind) => {
+      if (phase === 'decoding' && kind === 'stdout' || phase === 'transcribing' && kind === 'stderr') decode(chunk);
+    } });
+  } catch {
+    throw mediaError(job.cancelled ? '分析已取消。' : phase === 'transcribing' ? '本机语音识别未完成，可重试；不会改动原媒体。' : '本机音轨处理未完成，可能没有可解码的音轨；仍可手动标记。');
+  }
 }
 
 async function cleanup(job) {
   if (job.handle) { await job.handle.close(); job.handle = null; }
-  for (const file of [job.source, job.wav, `${job.transcript}.srt`]) {
+  for (const file of [...(job.externalSource ? [] : [job.source]), job.wav, `${job.transcript}.srt`, path.join(job.directory, 'owner.json')]) {
     await fs.unlink(file).catch((cause) => { if (cause.code !== 'ENOENT') throw cause; });
   }
   await fs.rmdir(job.directory).catch((cause) => { if (cause.code !== 'ENOENT') throw cause; });
 }
 
 export class MediaAnalysisService {
-  constructor(root) {
-    this.root = root;
-    this.job = null;
+  constructor(root, { scheduler = null, processMedia = null, onQueued = null, resourceBudget = null, uploadIdleMs = 120_000, now = () => performance.now(), maxUploads = 2 } = {}) {
+    this.root = root; this.scheduler = scheduler; this.processMedia = processMedia; this.onQueued = onQueued; this.resourceBudget = resourceBudget; this.jobs = new Map();
+    this.uploadIdleMs = uploadIdleMs; this.now = now; this.maxUploads = maxUploads;
+    this.writes = keyedSerial();
+    this.interval = setInterval(() => { this.expireUploads().catch(() => { this.cleanupWarning = true; }); }, Math.min(15_000, uploadIdleMs)); this.interval.unref();
+  }
+  get job() { return this.jobs.values().next().value ?? null; }
+  get reservedBytes() { return [...this.jobs.values()].reduce((sum, job) => sum + job.size + Math.ceil(job.durationMs * 32), 0); }
+  async expireUploads() {
+    for (const job of this.jobs.values()) if (!job.processing && this.now() - job.touched > this.uploadIdleMs) await this.cancel(job.id);
+  }
+  assertOwner(id, context) {
+    const job = this.jobs.get(id);
+    if (job?.owner && (job.owner.clientId !== context?.clientId || job.owner.taskId !== context?.taskId)) throw new ReviewError('该上传不属于当前窗口／任务，未操作其他分析', 'analysis_owner');
   }
 
-  async start(size, durationMs) {
+  async start(size, durationMs, owner = null) {
     if (!Number.isSafeInteger(size) || size < 1 || size > MAX_MEDIA_BYTES) {
       throw mediaError('媒体大小超出本机分析范围；仍可播放和标记。');
     }
     if (!Number.isSafeInteger(durationMs) || durationMs < 1 || durationMs > 172800000) {
       throw mediaError('媒体时长无效。');
     }
-    if (this.job || this.starting) throw mediaError('上一段媒体仍在分析，请稍等或取消。');
+    const pcmBytes = Math.ceil(durationMs * 32);
+    if (pcmBytes > 512 * 1024 * 1024) throw mediaError('解码音轨预计超过512MiB临时预算；仍可播放和手动标记。');
+    if (this.jobs.size >= this.maxUploads || this.starting) throw mediaError('上一段媒体仍在分析，暂存槽已满，请稍等或取消自己的分析。');
+    if (this.reservedBytes + size + pcmBytes > 2 * 1024 ** 3) throw mediaError('媒体暂存总预算已满，请先结束自己的分析。');
     this.starting = true;
     let started;
     this.startDone = new Promise(resolve => { started = resolve; });
     try {
       const localRoot = (await runtimePaths(this.root)).local;
       await ordinaryDirectory(localRoot);
+      const disk = await fs.statfs(localRoot);
+      if (disk.bavail * disk.bsize < size + pcmBytes + 256 * 1024 * 1024) throw mediaError('本机临时磁盘空间不足，未接收媒体；原素材与意见保留。');
       const directory = await fs.mkdtemp(path.join(localRoot, 'analysis-'));
+      await atomicJson(path.join(directory, 'owner.json'), { format: 'media-review-temp/v2' });
       const source = path.join(directory, 'source.media');
       const handle = await fs.open(source, 'wx', 0o600);
       let finished;
       const done = new Promise(resolve => { finished = resolve; });
-      this.job = {
+      const job = {
         id: randomBytes(16).toString('hex'), size, durationMs, directory, source,
         wav: path.join(directory, 'audio.wav'), transcript: path.join(directory, 'transcript'),
-        handle, nextIndex: 0, written: 0, child: null, cancelled: false, processing: false,
-        done, finished, cancelPromise: null,
+        handle, nextIndex: 0, written: 0, cancelled: false, processing: false,
+        done, finished, cancelPromise: null, controller: new AbortController(), owner, touched: this.now(),
       };
-      return this.job.id;
+      this.jobs.set(job.id, job);
+      return job.id;
     } finally { this.starting = false; started(); }
   }
 
   async append(id, index, base64) {
-    const job = this.job;
+    return this.writes(id, () => this.appendChunk(id, index, base64));
+  }
+  async appendChunk(id, index, base64) {
+    const job = this.jobs.get(id);
     if (!job || job.id !== id || job.processing || job.cancelled) throw mediaError('本次媒体分析已经结束。');
     if (!Number.isSafeInteger(index) || index !== job.nextIndex || typeof base64 !== 'string' ||
         base64.length < 1 || base64.length > Math.ceil(MAX_CHUNK_BYTES * 4 / 3) + 4 ||
@@ -224,18 +231,49 @@ export class MediaAnalysisService {
       offset += result.bytesWritten;
     }
     job.written += bytes.length;
-    job.nextIndex += 1;
+    job.nextIndex += 1; job.touched = this.now();
     return job.written;
   }
 
+  async fromFile(file, durationMs, onEvent, signal) {
+    const stat = await fs.lstat(file);
+    const id = await this.start(stat.size, durationMs);
+    const job = this.jobs.get(id);
+    await job.handle.close(); job.handle = null; await fs.unlink(job.source);
+    job.source = file; job.externalSource = true; job.written = job.size;
+    const abort = () => { void this.cancel(id); };
+    signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
+    try { await this.finish(id, onEvent); }
+    finally { signal?.removeEventListener('abort', abort); }
+  }
   async finish(id, onEvent) {
-    const job = this.job;
-    if (!job || job.id !== id || job.processing || job.cancelled) throw mediaError('本次媒体分析已经结束。');
-    if (job.written !== job.size) throw mediaError('媒体尚未完整到达本机分析器。');
-    job.processing = true;
+    const job = this.jobs.get(id);
+    await this.writes(id, async () => {
+      if (!job || !this.jobs.has(id) || job.processing || job.cancelled) throw mediaError('本次媒体分析已经结束。');
+      if (job.written !== job.size) throw mediaError('媒体尚未完整到达本机分析器。');
+      job.processing = true;
+      if (job.handle) { await job.handle.close(); job.handle = null; }
+    });
+    const perform = () => this.processMedia ? this.processMedia(job, onEvent, observer => this.process(job, observer)) : this.process(job, onEvent);
     try {
-      await job.handle.close();
-      job.handle = null;
+      if (this.scheduler) await this.scheduler.transient(async signal => {
+        const abort = () => { job.cancelled = true; job.controller.abort(); };
+        signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort();
+        try { const result = await perform(); signal.throwIfAborted(); return result ?? { finished: true }; }
+        finally { signal.removeEventListener('abort', abort); }
+      }, {
+        signal: job.controller.signal, owner: job.owner?.taskId,
+        memoryBytes: this.resourceBudget ? await this.resourceBudget() : undefined,
+        onQueued: async queueId => { job.queueId = queueId; await this.onQueued?.(job, queueId); onEvent({ kind: 'progress', phase: 'queued', percent: null }); },
+      });
+      else await perform();
+    } finally {
+      try { await cleanup(job); }
+      catch { onEvent({ kind: 'cleanup-warning', message: '临时媒体未能自动清理，请关闭工具后检查本机临时目录。' }); }
+      this.jobs.delete(id); job.finished();
+    }
+  }
+  async process(job, onEvent) {
       let tools;
       let ffmpeg;
       try {
@@ -256,10 +294,12 @@ export class MediaAnalysisService {
         onEvent({ kind: 'progress', phase: 'decoding', percent: 0 });
         await runProgram(job, ffmpeg, [
           '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-nostats', '-progress', 'pipe:1',
+          '-threads', String(ANALYSIS_THREADS), '-filter_threads', String(ANALYSIS_THREADS),
           '-protocol_whitelist', 'file,pipe', '-i', job.source, '-map', '0:a:0',
-          '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', job.wav,
+          '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', '-fs', String(512 * 1024 * 1024), job.wav,
         ], 15 * 60 * 1000, 'decoding', onEvent);
         if (job.cancelled) throw mediaError('分析已取消。');
+        if ((await fs.stat(job.wav)).size >= 512 * 1024 * 1024) throw mediaError('音轨触及临时容量上限，未返回会误导时间定位的截断波形。');
         onEvent({ kind: 'progress', phase: 'waveform', percent: null });
         onEvent({ kind: 'wave', metric: 'rms', peaks: await waveRms(job.wav) });
       } catch (cause) {
@@ -289,42 +329,37 @@ export class MediaAnalysisService {
         if (job.cancelled) throw mediaError('分析已取消。');
         onEvent({ kind: 'progress', phase: 'loading-model', percent: null });
         await runProgram(job, whisper, [
-          '-m', model, '-f', job.wav, '-l', 'zh', '-osrt', '-of', job.transcript, '-pp', '-ng',
+          '-m', model, '-f', job.wav, '-l', 'zh', '-t', String(ANALYSIS_THREADS), '-osrt', '-of', job.transcript, '-pp', '-ng',
         ], 30 * 60 * 1000, 'transcribing', onEvent);
         if (job.cancelled) throw mediaError('分析已取消。');
         onEvent({ kind: 'progress', phase: 'finalizing', percent: null });
-        const srt = await fs.readFile(`${job.transcript}.srt`, 'utf8');
+        const transcriptFile = `${job.transcript}.srt`, stat = await fs.lstat(transcriptFile);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw mediaError('台词结果超出4MiB安全读取范围，原媒体与意见保留。');
+        const srt = await fs.readFile(transcriptFile, 'utf8');
         if (srt.trim()) onEvent({ kind: 'transcript', srt });
         else onEvent({ kind: 'transcript-error', message: '这段音轨未识别出可用台词；仍可按波形标记，也可重试识别。' });
       } catch (cause) {
         onEvent({ kind: 'transcript-error', message: cause instanceof MediaAnalysisError ? cause.message : '本机语音识别没有完成；可重试，仍可按波形和画面标记。' });
       }
-    } finally {
-      try { await cleanup(job); }
-      catch { onEvent({ kind: 'cleanup-warning', message: '临时媒体未能自动清理，请关闭工具后检查本机临时目录。' }); }
-      if (this.job === job) this.job = null;
-      job.finished();
-    }
   }
 
   async cancel(id) {
-    const job = this.job;
+    const job = this.jobs.get(id);
     if (!job || job.id !== id) return false;
     job.cancelPromise ??= (async () => {
-      job.cancelled = true;
-      job.child?.kill();
+      job.cancelled = true; job.controller.abort();
       if (job.processing) await job.done;
-      else {
+      else await this.writes(id, async () => {
         try { await cleanup(job); }
-        finally { if (this.job === job) this.job = null; job.finished(); }
-      }
+        finally { this.jobs.delete(id); job.finished(); }
+      });
       return true;
     })();
     return job.cancelPromise;
   }
 
   async close() {
-    await this.startDone;
-    if (this.job) await this.cancel(this.job.id);
+    clearInterval(this.interval); await this.startDone;
+    await Promise.all([...this.jobs.keys()].map(id => this.cancel(id)));
   }
 }

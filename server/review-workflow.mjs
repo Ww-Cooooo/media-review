@@ -10,16 +10,29 @@ const bad = message => { throw new RecordValidationError(message); };
 const keys = (value, expected) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...expected].sort().join(',');
 const integer = (value, max) => Number.isSafeInteger(value) && value >= 0 && value <= max;
 
-export async function identifyFile(source) {
-  const file = path.resolve(source), stat = await fs.lstat(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || !TYPES.has(path.extname(file).toLowerCase()) || !stat.size) throw new Error('只接受明确指定的普通音视频文件');
-  if (await fs.realpath(file) !== file) throw new Error('媒体路径包含链接，请明确指定实际文件');
+export async function sampledFingerprint(file) {
+  const stat = await fs.lstat(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || !stat.size) bad('媒体不是普通文件');
   const handle = await fs.open(file, 'r');
   try {
+    const opened = await handle.stat();
+    if (['dev', 'ino', 'size', 'mtimeMs'].some(key => opened[key] !== stat[key])) bad('媒体在读取前发生变化');
     const first = Buffer.alloc(Math.min(stat.size, 256 * 1024)), last = Buffer.alloc(first.length), size = Buffer.alloc(8);
-    size.writeBigUInt64BE(BigInt(stat.size)); await handle.read(first, 0, first.length, 0); await handle.read(last, 0, last.length, Math.max(0, stat.size - last.length));
-    return { source: file, name: path.basename(file), size: stat.size, type: TYPES.get(path.extname(file).toLowerCase()), mtimeMs: stat.mtimeMs, fingerprint: createHash('sha256').update(size).update(first).update(last).digest('hex') };
+    size.writeBigUInt64BE(BigInt(stat.size));
+    const a = await handle.read(first, 0, first.length, 0), b = await handle.read(last, 0, last.length, Math.max(0, stat.size - last.length));
+    const after = await handle.stat();
+    if (a.bytesRead !== first.length || b.bytesRead !== last.length || ['dev', 'ino', 'size', 'mtimeMs'].some(key => after[key] !== stat[key])) bad('媒体在读取期间发生变化');
+    return createHash('sha256').update(size).update(first).update(last).digest('hex');
   } finally { await handle.close(); }
+}
+
+export async function identifyFile(source) {
+  if (typeof source !== 'string' || !path.isAbsolute(source)) bad('请明确指定媒体的绝对路径');
+  const requested = path.resolve(source), file = await fs.realpath(requested), stat = await fs.lstat(requested);
+  const normalize = value => process.platform === 'win32' ? value.toLowerCase() : value;
+  if (normalize(file) !== normalize(requested) || stat.isSymbolicLink()) bad('媒体路径包含链接，请明确指定实际文件');
+  if (!stat.isFile() || !TYPES.has(path.extname(file).toLowerCase()) || !stat.size) bad('只接受明确指定的普通音视频文件');
+  return { source: file, name: path.basename(file), size: stat.size, type: TYPES.get(path.extname(file).toLowerCase()), mtimeMs: stat.mtimeMs, fingerprint: await sampledFingerprint(file) };
 }
 
 export async function enqueueMedia(root, source) {
@@ -73,22 +86,101 @@ export class ReviewWorkflow {
     if (opened.dev !== stat.dev || opened.ino !== stat.ino || opened.size !== expected.size || opened.mtimeMs !== expected.mtimeMs) { await handle.close(); bad('原媒体在读取前发生变化'); }
     return { ...expected, handle };
   }
-  async load(fingerprint) {
+  workspaceFile(fingerprint, clientId = null) {
     validateFingerprint(fingerprint);
-    try { return validateWorkspace(await readJson(path.join(this.reviews, 'drafts', `${fingerprint}.workspace.json`), MAX_WORKSPACE_BYTES)); }
-    catch (cause) { if (cause.code === 'ENOENT') return null; throw new RecordValidationError('恢复资料无法读取，原文件保留；不会覆盖它'); }
+    if (clientId !== null && !/^[a-f0-9-]{36}$/u.test(clientId)) bad('恢复窗口身份无效');
+    return path.join(this.reviews, 'drafts', `${fingerprint}${clientId ? `.${clientId}` : ''}.workspace.json`);
   }
-  async save(value) {
+  async load(fingerprint, clientId = null) {
+    let file = this.workspaceFile(fingerprint, clientId);
+    try {
+      if (clientId && !await fs.lstat(file).catch(() => null)) {
+        const archived = [];
+        try {
+          let count = 0;
+          for await (const entry of await fs.opendir(path.join(this.reviews, 'drafts', 'archive'))) {
+            if (++count > 1024) break;
+            if (!entry.name.startsWith(`${fingerprint}.${clientId}.`) || !entry.name.endsWith('.workspace.json')) continue;
+            const candidate = path.join(this.reviews, 'drafts', 'archive', entry.name), stat = await fs.lstat(candidate);
+            if (stat.isFile() && !stat.isSymbolicLink()) archived.push({ candidate, at: stat.mtimeMs });
+          }
+        } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+        archived.sort((a, b) => b.at - a.at);
+        if (archived.length) file = archived[0].candidate;
+        else {
+          const pointer = await readJson(path.join(this.reviews, 'drafts', `${fingerprint}.latest.json`), 1024).catch(cause => { if (cause.code === 'ENOENT') return null; throw cause; });
+          file = this.workspaceFile(fingerprint, pointer?.clientId ?? null);
+        }
+      }
+      const workspace = validateWorkspace(await readJson(file, MAX_WORKSPACE_BYTES));
+      this.loadedAt = (await fs.stat(file)).mtimeMs;
+      return workspace;
+    } catch (cause) { if (cause.code === 'ENOENT') return null; throw new RecordValidationError('恢复资料无法读取，原文件保留；不会覆盖它'); }
+  }
+  async save(value, clientId = null) {
     validateWorkspace(value);
+    if (Buffer.byteLength(`${JSON.stringify(value)}\n`) > MAX_WORKSPACE_BYTES) bad('恢复资料超出容量，本页输入保留');
     const directory = await ordinaryDirectory(path.join(this.reviews, 'drafts'));
-    // 已损坏的恢复文件不能被下一次自动保存悄悄替换。
-    await this.load(value.media.fingerprint);
-    await atomicJson(path.join(directory, `${value.media.fingerprint}.workspace.json`), value);
-    await atomicJson(path.join(directory, 'latest.json'), { fingerprint: value.media.fingerprint, name: value.media.name });
+    const file = this.workspaceFile(value.media.fingerprint, clientId);
+    if (clientId && !await fs.lstat(file).catch(() => null)) {
+      const existing = (await fs.readdir(directory)).filter(name => name.startsWith(`${value.media.fingerprint}.`) && name.endsWith('.workspace.json'));
+      if (existing.length >= 8) {
+        const candidates = await Promise.all(existing.map(async name => ({ name, stat: await fs.lstat(path.join(directory, name)) })));
+        const oldest = candidates.filter(item => item.stat.isFile() && !item.stat.isSymbolicLink() && item.stat.size <= MAX_WORKSPACE_BYTES).sort((a, b) => a.stat.mtimeMs - b.stat.mtimeMs)[0];
+        if (!oldest) bad('旧窗口恢复副本身份不明，原资料保留，请查看任务资料');
+        const source = path.join(directory, oldest.name), bytes = await fs.readFile(source);
+        validateWorkspace(await readJson(source, MAX_WORKSPACE_BYTES));
+        const archive = await ordinaryDirectory(path.join(directory, 'archive'));
+        let count = 0, total = 0;
+        for await (const entry of await fs.opendir(archive)) {
+          if (++count > 1024) break;
+          const stat = await fs.lstat(path.join(archive, entry.name)); total += stat.size;
+        }
+        if (count >= 1024 || total + bytes.length > 256 * 1024 * 1024) bad('恢复归档已达1024份或256MiB，请先整理drafts/archive；旧资料未删除，本页输入保留');
+        const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+        const archived = path.join(archive, `${oldest.name.slice(0, -15)}.${digest}.workspace.json`);
+        try { await fs.copyFile(source, archived, fs.constants.COPYFILE_EXCL); }
+        catch (cause) {
+          if (cause.code !== 'EEXIST') throw cause;
+          const stat = await fs.lstat(archived);
+          if (!stat.isFile() || stat.isSymbolicLink() || !(await fs.readFile(archived)).equals(bytes)) bad('恢复归档身份冲突，未替换旧文件');
+        }
+        const current = await fs.lstat(source);
+        if (['dev', 'ino', 'size', 'mtimeMs'].some(key => current[key] !== oldest.stat[key])) bad('旧窗口副本在归档期间变化，两个位置均保留');
+        await fs.unlink(source); // 旧字节已独立保留在archive，不作为可重建缓存删除。
+      }
+    }
+    // 每个窗口独立恢复副本，接管或陈旧自动保存不能覆盖另一窗口的输入。
+    try { validateWorkspace(await readJson(file, MAX_WORKSPACE_BYTES)); } catch (cause) { if (cause.code !== 'ENOENT') bad('恢复资料无法读取，原文件保留；不会覆盖它'); }
+    await atomicJson(file, value);
+    await atomicJson(path.join(directory, `${value.media.fingerprint}.latest.json`), { clientId });
+    await atomicJson(path.join(directory, 'latest.json'), { fingerprint: value.media.fingerprint, name: value.media.name, clientId });
     return { saved: true };
   }
+  async archive(value, clientId) {
+    validateWorkspace(value); this.workspaceFile(value.media.fingerprint, clientId);
+    const directory = await ordinaryDirectory(path.join(this.reviews, 'drafts', 'archive'));
+    const bytes = Buffer.from(`${JSON.stringify(value)}\n`);
+    if (bytes.length > MAX_WORKSPACE_BYTES) bad('恢复副本超出容量，原输入保留');
+    let count = 0, total = 0;
+    for await (const entry of await fs.opendir(directory)) {
+      if (++count > 1024) break;
+      total += (await fs.lstat(path.join(directory, entry.name))).size;
+    }
+    const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+    const file = path.join(directory, `${value.media.fingerprint}.${clientId}.${digest}.workspace.json`);
+    const existing = await fs.lstat(file).catch(cause => { if (cause.code !== 'ENOENT') throw cause; return null; });
+    if (existing) {
+      if (!existing.isFile() || existing.isSymbolicLink() || existing.size !== bytes.length || !(await fs.readFile(file)).equals(bytes)) bad('恢复归档身份冲突，未覆盖');
+    } else {
+      if (count >= 1024 || total + bytes.length > 256 * 1024 * 1024) bad('恢复归档容量已满，请先整理drafts/archive；旧资料和本页输入保留');
+      await fs.writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
+    }
+    if (!(await fs.readFile(file)).equals(bytes)) bad('恢复归档未读回确认，本页输入保留');
+    return { archived: true };
+  }
   async latest() {
-    try { const pointer = await readJson(path.join(this.reviews, 'drafts/latest.json'), 1024); return await this.load(pointer.fingerprint); }
+    try { const pointer = await readJson(path.join(this.reviews, 'drafts/latest.json'), 1024); return await this.load(pointer.fingerprint, pointer.clientId ?? null); }
     catch (cause) { if (cause.code === 'ENOENT') return null; throw cause; }
   }
 }

@@ -14,7 +14,13 @@ async function fixture(t, options={}) {
   const app=await createReviewServer({rootDir:root,idleMs:10000,maxLifetimeMs:60000,...options});
   t.after(async()=>{await app.close(); await fs.rm(temporary,{recursive:true});});
   const token=/window\.__REVIEW_SESSION_TOKEN__="([a-f0-9]+)"/u.exec(await(await fetch(app.url)).text())[1];
-  const post=(route,body,headers={})=>fetch(app.url+route,{method:'POST',headers:{Origin:app.url,'Content-Type':'application/json','X-Review-Token':token,...headers},body:JSON.stringify(body)});
+  const revisions = new Map();
+  const post = async (route, body, headers = {}) => {
+    if (route === '/api/reviews/save') body = { record: body, baseRevision: revisions.get(body.media.fingerprint) ?? null };
+    const response = await fetch(app.url + route, { method: 'POST', headers: { Origin: app.url, 'Content-Type': 'application/json', 'X-Review-Token': token, ...headers }, body: JSON.stringify(body) });
+    if (response.ok && ['/api/reviews/save', '/api/reviews/load'].includes(route)) { const value = await response.clone().json(); revisions.set(value.record?.media.fingerprint ?? body.fingerprint, value.revision); }
+    return response;
+  };
   const source=path.join(temporary,'isolated.mp4'); await fs.writeFile(source,Buffer.alloc(2048,3));
   return {root,temporary,source,post,...app};
 }

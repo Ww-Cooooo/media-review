@@ -7,14 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { MAX_RECORD_BYTES, RecordValidationError, validateFingerprint, validateRecord } from './review-record.mjs';
 import { MAX_CHUNK_BYTES, MediaAnalysisError, MediaAnalysisService } from './media-analysis.mjs';
 import { MAX_REFERENCE_REQUEST, readReference, writeReference, verifyReferences } from './review-reference.mjs';
-import { UI_REVISION, runtimePaths, ordinaryDirectory } from './runtime.mjs';
+import { Readable } from 'node:stream';
+import { UI_REVISION, SERVICE_PROTOCOL, runtimePaths, ordinaryDirectory, pathIdentity, keyedSerial, documentRevision, ReviewError, readJson, atomicJson } from './runtime.mjs';
+import { ReviewService } from './review-service.mjs';
 import { exportReview } from './review-export.mjs';
 import { MAX_WORKSPACE_BYTES, ReviewWorkflow } from './review-workflow.mjs';
 import { listReviewHistory, openReviewLocation, openSystemLocation } from './review-history.mjs';
 
-const DEFAULT_IDLE_MS = 30 * 60 * 1000;
-const DEFAULT_LIFETIME_MS = 4 * 60 * 60 * 1000;
-const MAX_REQUESTS = 4000;
+const DEFAULT_IDLE_MS = 10 * 60 * 1000;
+const MAX_REQUESTS_PER_MINUTE = 3000;
+const MAX_INFLIGHT_BODY_BYTES = 64 * 1024 * 1024;
 const MAX_MEDIA_REQUEST_BYTES = Math.ceil(MAX_CHUNK_BYTES * 4 / 3) + 4096;
 const JSON_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/iu;
 const MIME = new Map([
@@ -89,12 +91,13 @@ async function readSavedRecord(reviews, fingerprint) {
   return record;
 }
 
-async function saveRecord(reviews, record) {
+async function saveRecord(reviews, record, baseRevision) {
   const fingerprint = record.media.fingerprint;
   const fileName = `${fingerprint}.review.json`;
   const file = path.join(reviews, fileName);
   // Do not replace a corrupt or future-format record. That is user data, not a repair target.
   const existing = await readSavedRecord(reviews, fingerprint);
+  if (documentRevision(existing) !== baseRevision) throw new ReviewError('正式意见已被另一窗口修改；没有覆盖先保存的内容。本页意见与草稿仍在，请先核对两个版本。', 'review_conflict');
   if (existing && ['name', 'size', 'type', 'durationMs', 'fingerprint']
     .some((key) => existing.media[key] !== record.media[key])) {
     throw new RecordValidationError('已有记录的媒体身份不同，已原样保留');
@@ -108,7 +111,21 @@ async function saveRecord(reviews, record) {
     const digest = createHash('sha256').update(oldBytes).digest('hex').slice(0, 16);
     const backup = path.join(reviews, `${fingerprint}.${digest}.v1.backup.json`);
     try { await fs.copyFile(file, backup, constants.COPYFILE_EXCL); }
-    catch (cause) { if (cause.code !== 'EEXIST' || !(await fs.readFile(backup)).equals(oldBytes)) throw cause; }
+    catch (cause) {
+      if (cause.code !== 'EEXIST') throw cause;
+      const stat = await fs.lstat(backup);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== oldBytes.length || !(await fs.readFile(backup)).equals(oldBytes)) throw new RecordValidationError('旧版备份身份不明，原文件保留，未覆盖');
+    }
+  }
+  if (existing) {
+    const oldBytes = await fs.readFile(file), directory = await ordinaryDirectory(path.join(reviews, 'versions'));
+    const backup = path.join(directory, `${fingerprint}.${baseRevision}.review.json`);
+    try { await fs.copyFile(file, backup, constants.COPYFILE_EXCL); }
+    catch (cause) {
+      if (cause.code !== 'EEXIST') throw cause;
+      const stat = await fs.lstat(backup);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== oldBytes.length || !(await fs.readFile(backup)).equals(oldBytes)) throw new RecordValidationError('旧版备份身份不明，原文件保留，未覆盖');
+    }
   }
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   if (Buffer.byteLength(payload, 'utf8') > MAX_RECORD_BYTES) {
@@ -122,12 +139,13 @@ async function saveRecord(reviews, record) {
     await handle.sync();
     await handle.close();
     handle = null;
+    if (documentRevision(await readSavedRecord(reviews, fingerprint)) !== baseRevision) throw new ReviewError('记录在提交前发生变化，未覆盖；本页意见仍保留。', 'review_conflict');
     await fs.rename(temporary, file);
     const written = await readSavedRecord(reviews, fingerprint);
     if (JSON.stringify(written) !== JSON.stringify(record)) {
       throw new Error('保存后的记录回读不一致');
     }
-    return { fileName, record: written, recordPath: file.replaceAll('\\', '/'), savedAt: new Date().toISOString() };
+    return { fileName, record: written, revision: documentRevision(written), recordPath: file.replaceAll('\\', '/'), savedAt: new Date().toISOString() };
   } finally {
     if (handle) await handle.close().catch(() => {});
     await fs.unlink(temporary).catch((cause) => {
@@ -195,19 +213,25 @@ export async function createReviewServer({
   rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
   port = 0,
   idleMs = DEFAULT_IDLE_MS,
-  maxLifetimeMs = DEFAULT_LIFETIME_MS,
+  maxLifetimeMs = null,
   locationOpener = openSystemLocation,
+  clock = () => performance.now(),
+  serviceOptions = {},
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('端口无效');
   if (!Number.isInteger(idleMs) || idleMs < 1000) throw new Error('空闲时限无效');
-  if (!Number.isInteger(maxLifetimeMs) || maxLifetimeMs < idleMs) throw new Error('总时限无效');
+  if (maxLifetimeMs !== null && (!Number.isInteger(maxLifetimeMs) || maxLifetimeMs < idleMs)) throw new Error('总时限无效');
   const root = await fs.realpath(rootDir);
   const dist = await fs.realpath(path.join(root, 'dist'));
   if (!isInside(root, dist)) throw new Error('构建目录必须位于扩展目录内');
   const location = await runtimePaths(root);
   const reviews = location.standalone ? await ordinaryDirectory(location.reviews) : await ensureReviewsDirectory(root);
   const workflow = new ReviewWorkflow(root, reviews);
-  const mediaAnalysis = new MediaAnalysisService(root);
+  const local = await ordinaryDirectory(location.local);
+  const state = await new ReviewService(root, local, reviews, { ...serviceOptions, locationOpener }).init();
+  const mediaAnalysis = state.uploads;
+  const serial = keyedSerial();
+  const rootId = pathIdentity(root), dataId = pathIdentity(local);
   const reviewsStat = await fs.lstat(reviews);
   async function assertReviewsDirectory() {
     const current = await fs.lstat(reviews);
@@ -220,26 +244,30 @@ export async function createReviewServer({
   const runtimeId = randomBytes(16).toString('hex');
   const token = randomBytes(32).toString('hex');
   const nonce = randomBytes(18).toString('base64');
-  const started = Date.now();
-  let lastRequest = started;
-  let count = 0;
-  let server;
-
-  const close = () => new Promise((resolve) => {
-    void mediaAnalysis.close();
-    if (!server?.listening) return resolve();
-    server.close(() => resolve());
-    server.closeAllConnections();
-  });
+  let windowStarted = clock(), emptySince = clock(), count = 0, inFlightBytes = 0, inFlight = 0;
+  let server, closing;
+  const identity = { ok: true, app: 'ai-carry-media-review', version: 2, protocol: SERVICE_PROTOCOL, runtimeId, uiRevision: UI_REVISION, rootId, dataId };
+  const lifecycleFile = path.join(local, 'lifecycle.json');
+  let lifecycleWritable = true, previous = null;
+  try {
+    const old = await readJson(lifecycleFile, 4096);
+    if (old.format !== 'media-review-lifecycle/v1') lifecycleWritable = false;
+    else previous = { runtimeId: old.runtimeId, startedAt: old.startedAt, exitedAt: old.exitedAt ?? null, reason: old.reason ?? 'unconfirmed' };
+  } catch (cause) { if (cause.code !== 'ENOENT') lifecycleWritable = false; }
+  const lifecycle = { format: 'media-review-lifecycle/v1', runtimeId, uiRevision: UI_REVISION, startedAt: new Date().toISOString(), previous };
+  if (lifecycleWritable) await atomicJson(lifecycleFile, lifecycle).catch(() => { lifecycleWritable = false; });
+  const close = (reason = 'explicit') => closing ??= (async () => {
+    try { await state.close(); } catch { state.uploads.cleanupWarning = true; }
+    finally {
+      if (lifecycleWritable) await atomicJson(lifecycleFile, { ...lifecycle, exitedAt: new Date().toISOString(), reason, cleanupWarning: !!state.uploads.cleanupWarning }).catch(() => {});
+      if (server?.listening) await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+    }
+  })();
 
   server = createServer(async (req, res) => {
+    let reserved = 0, admitted = false;
     try {
-      if (req.url !== '/api/health' && req.url !== '/api/workflow/current') count += 1;
-      if (count > MAX_REQUESTS || Date.now() - started > maxLifetimeMs) {
-        error(res, 503, 'session_expired', '审片台本次会话已结束，请重新打开');
-        void close();
-        return;
-      }
+      if (closing) return error(res, 503, 'service_closing', '校对室正在退出，已有资料保留');
       const address = server.address();
       const origin = `http://127.0.0.1:${address.port}`;
       const host = `127.0.0.1:${address.port}`;
@@ -264,24 +292,36 @@ export async function createReviewServer({
       }
       if (pathname === '/api/health') {
         if (req.method !== 'GET') return error(res, 405, 'method_not_allowed', '不支持此请求');
-        return json(res, 200, { ok: true, app: 'ai-carry-media-review', version: 2, runtimeId, uiRevision: UI_REVISION, rootId: createHash('sha256').update(root.replaceAll('\\', '/').toLowerCase()).digest('hex') });
+        return json(res, 200, identity);
       }
+      if (pathname === '/api/session/bootstrap' && req.method === 'GET') return json(res, 200, { ...identity, token });
       if (pathname.startsWith('/api/')) {
         if (req.method !== 'POST') return error(res, 405, 'method_not_allowed', '不支持此请求');
         if (req.headers.origin !== origin || !sameToken(req.headers['x-review-token'], token)) {
           return error(res, 403, 'invalid_session', '审片台会话无效，请重新打开');
         }
-        if (pathname !== '/api/workflow/current') lastRequest = Date.now();
+        if (clock() - windowStarted > 60_000) { count = 0; windowStarted = clock(); }
+        if (++count > MAX_REQUESTS_PER_MINUTE) return error(res, 429, 'request_rate', '本机请求过密，请稍后重试；没有结束服务');
         if (!JSON_TYPE.test(req.headers['content-type'] ?? '') || req.headers['content-encoding'] ||
             req.headers['transfer-encoding']) {
           return error(res, 415, 'invalid_content_type', '需要 JSON 请求');
         }
-        const requestLimit = pathname === '/api/workspace/save' ? MAX_WORKSPACE_BYTES : pathname === '/api/media/append' ? MAX_MEDIA_REQUEST_BYTES : pathname === '/api/references/save' ? MAX_REFERENCE_REQUEST : MAX_RECORD_BYTES;
+        const requestLimit = pathname === '/api/workspace/save' || pathname === '/api/workspace/archive' ? MAX_WORKSPACE_BYTES + 4096 : pathname === '/api/media/append' ? MAX_MEDIA_REQUEST_BYTES : pathname === '/api/references/save' ? MAX_REFERENCE_REQUEST : MAX_RECORD_BYTES + 4096;
         const length = Number(req.headers['content-length']);
         if (!Number.isInteger(length) || length < 1 || length > requestLimit) {
           return error(res, 413, 'invalid_length', '请求大小无效');
         }
+        if (inFlightBytes + length > MAX_INFLIGHT_BODY_BYTES || inFlight >= 64) return error(res, 429, 'request_capacity', '当前在途请求达到容量，请稍后重试；输入未被清空');
+        reserved = length; inFlightBytes += length; inFlight++; admitted = true; emptySince = null;
         const body = await readJsonBody(req, requestLimit);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new RecordValidationError('JSON请求需要对象');
+        const context = body.context ?? null;
+        if (body && typeof body === 'object') delete body.context;
+        const handled = await state.route(pathname, body, context);
+        if (handled !== null) return json(res, 200, handled);
+        const fingerprintOf = value => value?.media?.fingerprint ?? value?.fingerprint;
+        const scoped = (value, writing = false) => state.scope(context, fingerprintOf(value), writing);
+        const scopedWorkflow = async value => new ReviewWorkflow(root, await scoped(value));
         if (pathname === '/api/history/list') {
           if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new RecordValidationError('历史请求无效');
           await assertReviewsDirectory(); return json(res, 200, await listReviewHistory(reviews));
@@ -292,31 +332,42 @@ export async function createReviewServer({
         if (pathname === '/api/workflow/current' || pathname === '/api/workspace/latest') {
           if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new RecordValidationError('工作流请求无效');
           await assertReviewsDirectory();
-          return json(res, 200, pathname.endsWith('/current') ? { media: await workflow.current() } : { workspace: await workflow.latest() });
+          return json(res, 200, pathname.endsWith('/current') ? { media: await workflow.current() } : { workspace: await (await scopedWorkflow(body)).latest() });
         }
         if (pathname === '/api/workflow/media') {
-          if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'id') throw new RecordValidationError('带入媒体请求无效');
-          const media = await workflow.media(body.id);
+          if (Object.keys(body).some(key => !['id', 'readOnly'].includes(key))) throw new RecordValidationError('带入媒体请求无效');
+          const media = state.tasks.headers.has(body.id) ? await state.media(body.id, context, body.readOnly === true) : await workflow.media(body.id);
           res.writeHead(200, { 'Content-Type': media.type, 'Content-Length': media.size, 'Cache-Control': 'no-store' });
-          const stream = media.handle.createReadStream();
+          const stream = media.task ? Readable.from(state.mediaStream(media)) : media.handle.createReadStream();
           res.once('close', () => stream.destroy()); stream.on('error', () => res.destroy()).pipe(res); return;
         }
         if (pathname === '/api/workspace/load') {
           if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'fingerprint') throw new RecordValidationError('恢复请求无效');
           await assertReviewsDirectory();
-          const workspace = await workflow.load(body.fingerprint);
-          const at = workspace ? (await fs.stat(path.join(reviews, 'drafts', `${body.fingerprint}.workspace.json`))).mtimeMs : 0;
-          return json(res, 200, { workspace, at });
+          const selected = await scopedWorkflow(body), workspace = await selected.load(body.fingerprint, context?.clientId ?? null);
+          return json(res, 200, { workspace, at: selected.loadedAt ?? 0 });
         }
         if (pathname === '/api/workspace/save') {
-          await assertReviewsDirectory(); return json(res, 200, await workflow.save(body));
+          await assertReviewsDirectory(); await state.assertMedia(context, body.media);
+          const directory = await scoped(body, true);
+          return json(res, 200, await serial(`${directory}:draft:${body.media.fingerprint}`, () => new ReviewWorkflow(root, directory).save(body, context?.clientId ?? null)));
+        }
+        if (pathname === '/api/workspace/archive') {
+          await assertReviewsDirectory(); await state.assertMedia(context, body.media);
+          const directory = await scoped(body, true);
+          return json(res, 200, await serial(`${directory}:draft:${body.media.fingerprint}`, () => new ReviewWorkflow(root, directory).archive(body, context?.clientId ?? 'legacy')));
         }
         if (pathname === '/api/media/start') {
           if (body === null || typeof body !== 'object' || Array.isArray(body) ||
               Object.keys(body).sort().join(',') !== 'durationMs,size') {
             throw new RecordValidationError('媒体分析请求无效');
           }
-          const id = await mediaAnalysis.start(body.size, body.durationMs);
+          if (context?.taskId) {
+            const task = await state.tasks.read(context.taskId);
+            await state.scope(context, task.media.fingerprint, true);
+            if (body.size !== task.media.size) throw new RecordValidationError('上传媒体与当前任务大小不匹配');
+          }
+          const id = await mediaAnalysis.start(body.size, body.durationMs, context);
           res.once('close', () => { if (!res.writableEnded) void mediaAnalysis.cancel(id); });
           if (res.destroyed) { await mediaAnalysis.cancel(id); return; }
           return json(res, 200, { id });
@@ -326,6 +377,7 @@ export async function createReviewServer({
               Object.keys(body).sort().join(',') !== 'data,id,index') {
             throw new RecordValidationError('媒体分片请求无效');
           }
+          mediaAnalysis.assertOwner(body.id, context);
           return json(res, 200, { written: await mediaAnalysis.append(body.id, body.index, body.data) });
         }
         if (pathname === '/api/media/cancel') {
@@ -333,6 +385,7 @@ export async function createReviewServer({
               Object.keys(body).join(',') !== 'id') {
             throw new RecordValidationError('取消请求无效');
           }
+          mediaAnalysis.assertOwner(body.id, context);
           return json(res, 200, { cancelled: await mediaAnalysis.cancel(body.id) });
         }
         if (pathname === '/api/media/finish') {
@@ -340,6 +393,7 @@ export async function createReviewServer({
               Object.keys(body).join(',') !== 'id') {
             throw new RecordValidationError('完成请求无效');
           }
+          mediaAnalysis.assertOwner(body.id, context);
           res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' });
           res.on('close', () => { if (!res.writableEnded) void mediaAnalysis.cancel(body.id); });
           try {
@@ -359,15 +413,16 @@ export async function createReviewServer({
           }
           const fingerprint = validateFingerprint(body.fingerprint);
           await assertReviewsDirectory();
-          if (field === 'data') return json(res, 200, await writeReference(reviews, fingerprint, body.data));
-          const image = await readReference(reviews, fingerprint, body.fileName);
+          const directory = await scoped(body, field === 'data');
+          if (field === 'data') return json(res, 200, await writeReference(directory, fingerprint, body.data));
+          const image = await readReference(directory, fingerprint, body.fileName);
           return json(res, 200, { data: `data:image/jpeg;base64,${image.bytes.toString('base64')}` });
         }
         if (pathname === '/api/reviews/export') {
           if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'fingerprint') throw new RecordValidationError('导出请求无效');
           const fingerprint = validateFingerprint(body.fingerprint); await assertReviewsDirectory();
           const directory = await ordinaryDirectory(path.join(location.local, 'exports'));
-          return json(res, 200, await exportReview(root, fingerprint, path.join(directory, `review-${randomBytes(8).toString('hex')}`)));
+          return json(res, 200, await exportReview(root, fingerprint, path.join(directory, `review-${randomBytes(8).toString('hex')}`), await scoped(body)));
         }
         if (pathname === '/api/reviews/load') {
           if (body === null || typeof body !== 'object' || Array.isArray(body) ||
@@ -376,48 +431,57 @@ export async function createReviewServer({
           }
           const fingerprint = validateFingerprint(body.fingerprint);
           await assertReviewsDirectory();
-          const record = await readSavedRecord(reviews, fingerprint);
-          return json(res, 200, { found: record !== null, record, recordPath: record ? path.join(reviews, `${fingerprint}.review.json`).replaceAll('\\', '/') : null });
+          const directory = await scoped(body);
+          const record = await readSavedRecord(directory, fingerprint);
+          return json(res, 200, { found: record !== null, record, revision: documentRevision(record), recordPath: record ? path.join(directory, `${fingerprint}.review.json`).replaceAll('\\', '/') : null });
         }
         if (pathname === '/api/reviews/save') {
-          const record = validateRecord(body);
+          const record = validateRecord(body.record ?? body);
+          await state.assertMedia(context, record.media);
+          if (!Object.hasOwn(body, 'baseRevision') || !(body.baseRevision === null || typeof body.baseRevision === 'string' && /^[a-f0-9]{64}$/u.test(body.baseRevision))) throw new ReviewError('保存需要加载时的意见版本，请从当前入口重新连接；未覆盖原记录', 'revision_required', 428);
           await assertReviewsDirectory();
-          const saved = await saveRecord(reviews, record);
+          const directory = await scoped(record, true);
+          const saved = await serial(`${directory}:${record.media.fingerprint}`, () => saveRecord(directory, record, body.baseRevision));
           return json(res, 200, { saved: true, ...saved });
         }
         if (pathname === '/api/session/close') {
-          if (body === null || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0) {
-            throw new RecordValidationError('关闭请求无效');
-          }
-          json(res, 200, { closed: true });
-          void close();
+          if (body.confirm !== true || body.runtimeId !== runtimeId) throw new ReviewError('退出会影响整个校对室，请先查看使用情况并明确确认当前服务', 'close_confirmation');
+          if (state.clients.summary().unsavedWindows > (body.discardUnsaved === true ? 64 : 0)) throw new ReviewError('仍有窗口报告未保存输入，请先保存，或明确选择保留恢复副本后退出', 'unsaved_windows');
+          json(res, 200, { closing: true, retained: true });
+          void close('user-request');
           return;
         }
         return error(res, 404, 'not_found', '接口不存在');
       }
-      lastRequest = Date.now();
       return await serveStatic(req, res, dist, pathname, token, nonce);
     } catch (cause) {
+      if (res.headersSent) { if (!res.destroyed) res.destroy(); return; }
+      if (cause instanceof ReviewError) return error(res, cause.status, cause.code, cause.message);
       if (cause instanceof MediaAnalysisError) {
         return error(res, cause.message.includes('仍在分析') ? 409 : 400, 'media_analysis_unavailable', cause.message);
       }
       if (cause instanceof RecordValidationError) {
         return error(res, cause.message.startsWith('已有记录') ? 409 : 400, 'invalid_record', cause.message);
       }
-      error(res, 500, 'internal_error', '本地保存未能确认，请重新打开记录核对');
-    }
+      error(res, 500, 'internal_error', '本地操作未能确认，请核对本机磁盘与记录；原输入保留');
+    } finally { if (admitted) { inFlightBytes -= reserved; inFlight--; } }
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 5_000;
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, '127.0.0.1', resolve);
-  });
-  const interval = setInterval(() => {
-    if (Date.now() - lastRequest > idleMs || Date.now() - started > maxLifetimeMs) void close();
-  }, Math.min(15_000, idleMs));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', resolve);
+    });
+  } catch (cause) { await close('listen-failed'); throw cause; }
+  const checkIdle = () => {
+    if (state.busy || inFlight) emptySince = null;
+    else if (emptySince === null) emptySince = clock();
+    else if (clock() - emptySince > idleMs) void close('empty-desk');
+  };
+  const interval = setInterval(checkIdle, Math.min(15_000, idleMs));
   interval.unref();
   server.once('close', () => clearInterval(interval));
-  return { server, url: `http://127.0.0.1:${server.address().port}`, close };
+  return { server, url: `http://127.0.0.1:${server.address().port}`, close, identity, state, checkIdle };
 }

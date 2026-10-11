@@ -134,7 +134,7 @@ export function TranscriptPanel({ disabled = false, mediaKey, cues, status, erro
       <div className="transcript-progress-title" role="status"><Spin size="small" /><strong>{ANALYSIS_LABEL[progress.phase]}</strong></div>
       {estimated.display !== null && <><div className="estimated-readout"><strong>预计 {estimated.display.toFixed(1)}%</strong></div><Progress percent={estimated.display} status="normal" showInfo={false} strokeColor="#b95337" /></>}
       <div className="transcript-progress-meta"><span>已用 {formatTime(elapsedMs, false)}</span>{onCancel && <Button type="text" size="small" onClick={onCancel}>停止识别</Button>}</div>
-      <p>{estimated.silentMs > 90_000 ? '较长时间没有新进度回报。当前估算已接近上限；可以继续等候，或停止后重试，意见不受影响。' : progress.phase === 'loading-model' ? '本机正在加载语音模型，尚无可量化百分比。' : progress.phase === 'finalizing' ? '正在整理文字和时间码，结果返回前不会显示完成。' : '两次真实回报之间有限估算当前阶段；不是完成承诺，也不代表识别变快。仍可播放、选段和写意见。'}</p>
+      <p>{progress.phase === 'queued' ? '多个任务共用一个重分析槽。这里只是排队，不表示识别已开始或已经通过；仍可手动校对。' : progress.phase === 'waiting-resources' ? '可用内存不足，已暂停重分析，不会结束其他程序。可以先播放和写意见，资源恢复后继续。' : estimated.silentMs > 90_000 ? '较长时间没有新进度回报。当前估算已接近上限；可以继续等候，或停止后重试，意见不受影响。' : progress.phase === 'loading-model' ? '本机正在加载语音模型，尚无可量化百分比。' : progress.phase === 'finalizing' ? '正在整理文字和时间码，结果返回前不会显示完成。' : '两次真实回报之间有限估算当前阶段；不是完成承诺，也不代表识别变快。仍可播放、选段和写意见。'}</p>
     </div>}
     {status === 'unavailable' && onRetry && <div className="transcript-retry"><Button size="small" onClick={onRetry} disabled={!durationMs}>重新识别台词</Button><span>重试不会清空意见或修改原媒体。</span></div>}
     {status === 'ready' && <p className="transcript-ready" role="status">已生成 {cues.length} 句台词 · 自动识别，未校对</p>}

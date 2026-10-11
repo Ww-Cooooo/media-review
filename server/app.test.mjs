@@ -12,14 +12,14 @@ const fingerprint = 'a'.repeat(64);
 
 async function fixture(t) {
   const prefix = path.join(os.tmpdir(), `ai-carry-review-test-${randomBytes(4).toString('hex')}-`);
-  const root = await fs.mkdtemp(prefix);
-  await fs.mkdir(path.join(root, 'dist'));
+  const temporary = await fs.mkdtemp(prefix), root = path.join(temporary, 'workspace/media-review-desk');
+  await fs.mkdir(path.join(root, 'dist'), { recursive: true });
   await fs.writeFile(path.join(root, 'dist', 'index.html'),
     '<!doctype html><html><head></head><body><main>审片</main></body></html>', 'utf8');
   const app = await createReviewServer({ rootDir: root, idleMs: 10_000, maxLifetimeMs: 60_000 });
   t.after(async () => {
     await app.close();
-    const resolved = path.resolve(root);
+    const resolved = path.resolve(temporary);
     if (!path.basename(resolved).startsWith('ai-carry-review-test-') ||
         path.dirname(resolved) !== path.resolve(os.tmpdir())) {
       throw new Error('拒绝清理非本次隔离测试目录');
@@ -31,11 +31,12 @@ async function fixture(t) {
   const html = await page.text();
   const token = /window\.__REVIEW_SESSION_TOKEN__="([a-f0-9]{64})"/u.exec(html)?.[1];
   assert.ok(token);
-  return { ...app, root, token };
+  return { ...app, root, token, revisions: new Map() };
 }
 
 async function post(app, route, body, options = {}) {
-  return fetch(`${app.url}${route}`, {
+  if (route === '/api/reviews/save' && !Object.hasOwn(body, 'record')) body = { record: body, baseRevision: app.revisions.get(body.media.fingerprint) ?? null };
+  const response = await fetch(`${app.url}${route}`, {
     method: 'POST',
     headers: {
       Origin: app.url,
@@ -45,6 +46,10 @@ async function post(app, route, body, options = {}) {
     },
     body: JSON.stringify(body),
   });
+  if (response.ok && ['/api/reviews/save', '/api/reviews/load'].includes(route)) {
+    const value = await response.clone().json(); app.revisions.set(value.record?.media.fingerprint ?? body.fingerprint, value.revision);
+  }
+  return response;
 }
 
 function sampleRecord() {
@@ -92,11 +97,12 @@ test('保存、回读与损坏旧记录保护', async (t) => {
     fileName: `${fingerprint}.review.json`,
     recordPath,
     savedAt: receipt.savedAt,
+    revision: receipt.revision,
     record,
   });
   assert.deepEqual(JSON.parse(await fs.readFile(recordPath, 'utf8')), receipt.record);
   const loaded = await post(app, '/api/reviews/load', { fingerprint });
-  assert.deepEqual(await loaded.json(), { found: true, record, recordPath });
+  assert.deepEqual(await loaded.json(), { found: true, record, recordPath, revision: receipt.revision });
 
   const invalidTopic = structuredClone(record);
   invalidTopic.notes[0].topic = 'not-a-topic';
@@ -132,7 +138,7 @@ test('主机、来源、令牌、数据边界只局部拒绝', async (t) => {
   badRecord.notes[0].rect.x = 0.9;
   assert.equal((await post(app, '/api/reviews/save', badRecord)).status, 400);
   const missing = await post(app, '/api/reviews/load', { fingerprint });
-  assert.deepEqual(await missing.json(), { found: false, record: null, recordPath: null });
+  assert.deepEqual(await missing.json(), { found: false, record: null, recordPath: null, revision: null });
   const health = await fetch(`${app.url}/api/health`);
   assert.equal(health.status, 200);
   const wrongHostStatus = await new Promise((resolve, reject) => {

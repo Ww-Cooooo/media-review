@@ -1,8 +1,9 @@
-import { Button } from 'antd';
+import { Button, Tabs } from 'antd';
+import type { ReactNode } from 'react';
 import { ArrowRightOutlined, AudioOutlined, SafetyCertificateOutlined, VideoCameraOutlined } from '@ant-design/icons';
 import { ReviewHistory } from './ReviewHistory';
 
-export function ReviewHome({ onOpen, onResume, hasMedia, online }: { onOpen: (kind: 'video' | 'audio') => void; onResume: () => void; hasMedia: boolean; online: boolean }) {
+export function ReviewHome({ onOpen, onResume, hasMedia, online, tasks }: { onOpen: (kind: 'video' | 'audio') => void; onResume: () => void; hasMedia: boolean; online: boolean; tasks: ReactNode }) {
   return <main className="home">
     <div className="home-a"><section>
       <div className="eyebrow">看画面 · 听声音 · 留意见</div>
@@ -18,7 +19,7 @@ export function ReviewHome({ onOpen, onResume, hasMedia, online }: { onOpen: (ki
         ['圈画面，选一段', '按钮就在画面和时间轴旁边。'],
         ['写意见，交给 Agent', '保留准确位置，保存后复制交接内容。'],
       ].map(([title, text], index) => <div className="home-step" key={title}><span>0{index + 1}</span><strong>{title}</strong><p>{text}</p></div>)}</div>
-    </section><ReviewHistory online={online} /></div>
+    </section><div className="home-review-sidebar"><Tabs defaultActiveKey="tasks" items={[{ key: 'tasks', label: '校对任务', children: tasks }, { key: 'legacy', label: '旧版校对历史', children: <ReviewHistory online={online} /> }]} /></div></div>
     <footer className="home-foot"><span><SafetyCertificateOutlined />原素材只读 · 本机分析</span><span>意见保存后，再交给 Agent 处理</span><a href="/licenses/MiSans-License.pdf" target="_blank" rel="noopener">字体 MiSans · © Xiaomi</a></footer>
   </main>;
 }

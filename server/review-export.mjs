@@ -4,8 +4,9 @@ import { runtimePaths, ordinaryDirectory, readJson } from './runtime.mjs';
 import { validateFingerprint, validateRecord } from './review-record.mjs';
 import { verifyReferences } from './review-reference.mjs';
 
-export async function exportReview(root, fingerprint, destination) {
+export async function exportReview(root, fingerprint, destination, reviewDirectory = null) {
   validateFingerprint(fingerprint); const location = await runtimePaths(root);
+  if (reviewDirectory) location.reviews = reviewDirectory;
   const record = validateRecord(await readJson(path.join(location.reviews, `${fingerprint}.review.json`)), fingerprint);
   await verifyReferences(location.reviews, record);
   const out = path.resolve(destination); await ordinaryDirectory(path.dirname(out)); await fs.mkdir(out);

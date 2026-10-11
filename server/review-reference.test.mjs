@@ -15,12 +15,18 @@ const fingerprint = 'b'.repeat(64);
 const jpeg = Buffer.from([0xff,0xd8,0xff,0xc0,0,17,8,0,2,0,3,3,1,0x11,0,2,0x11,0,3,0x11,0,0xff,0xd9]);
 const data = `data:image/jpeg;base64,${jpeg.toString('base64')}`;
 async function fixture(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-carry-reference-test-'));
-  await fs.mkdir(path.join(root, 'dist')); await fs.writeFile(path.join(root, 'dist/index.html'), '<html><head></head><body>隔离测试</body></html>');
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-carry-reference-test-')), root = path.join(temporary, 'workspace/media-review-desk');
+  await fs.mkdir(path.join(root, 'dist'), { recursive: true }); await fs.writeFile(path.join(root, 'dist/index.html'), '<html><head></head><body>隔离测试</body></html>');
   const app = await createReviewServer({ rootDir: root, idleMs: 10_000, maxLifetimeMs: 60_000 });
-  t.after(async () => { await app.close(); if (!path.basename(root).startsWith('ai-carry-reference-test-') || path.dirname(root) !== path.resolve(os.tmpdir())) throw Error('拒绝清理其他目录'); await fs.rm(root, { recursive: true, force: true }); });
+  t.after(async () => { await app.close(); if (!path.basename(temporary).startsWith('ai-carry-reference-test-') || path.dirname(temporary) !== path.resolve(os.tmpdir())) throw Error('拒绝清理其他目录'); await fs.rm(temporary, { recursive: true, force: true }); });
   const html = await (await fetch(app.url)).text(); const token = /window\.__REVIEW_SESSION_TOKEN__="([a-f0-9]{64})"/u.exec(html)?.[1]; assert.ok(token);
-  const post = (route, body, extra = {}) => fetch(`${app.url}${route}`, { method: 'POST', headers: { Origin: app.url, 'Content-Type': 'application/json', 'X-Review-Token': token, ...extra }, body: JSON.stringify(body) });
+  const revisions = new Map();
+  const post = async (route, body, extra = {}) => {
+    if (route === '/api/reviews/save') body = { record: body, baseRevision: revisions.get(body.media.fingerprint) ?? null };
+    const response = await fetch(`${app.url}${route}`, { method: 'POST', headers: { Origin: app.url, 'Content-Type': 'application/json', 'X-Review-Token': token, ...extra }, body: JSON.stringify(body) });
+    if (response.ok && ['/api/reviews/save', '/api/reviews/load'].includes(route)) { const value = await response.clone().json(); revisions.set(value.record?.media.fingerprint ?? body.fingerprint, value.revision); }
+    return response;
+  };
   return { root, post, ...app };
 }
 function record(reference = undefined) {

@@ -2,6 +2,8 @@ import type { AnalysisProgress } from './api';
 
 export const ANALYSIS_LABEL = {
   preparing: '正在准备本机任务',
+  queued: '已排队 · 等待共用分析槽',
+  'waiting-resources': '等待可用内存 · 暂缓重分析',
   uploading: '素材传送到本机',
   decoding: '正在读取音轨',
   waveform: '正在生成声音波形',
