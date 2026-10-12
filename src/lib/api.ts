@@ -86,7 +86,15 @@ export interface ReviewTask {
   manual: boolean; legacy: boolean; contentHash?: string | null; jobStates?: Record<string, string>; media: Omit<WorkflowMedia, 'id'> & { durationMs?: number }; jobs: Record<string, string>;
 }
 export interface ServiceSummary { windows: number; unsavedWindows: number; pendingTasks: number; uploads: number; analysis: { running: number; queued: number; limit: number } }
-export interface TaskList { items: ReviewTask[]; total: number; active: number; warnings: string[]; service: ServiceSummary }
+export interface AnalysisActivityItem {
+  id: string; kind: string; state: 'running' | 'queued' | 'waiting-resources' | 'uploading' | 'preparing' | 'finalizing' | 'cancelling';
+  progress: { phase: string; percent: number | null } | null; mediaName: string;
+  tasks: { id: string; title: string; label: string; name: string; manual: boolean }[];
+  pages: { clientId: string; taskId: string | null; visible: boolean }[];
+}
+export interface AnalysisActivity { runtimeId: string; items: AnalysisActivityItem[] }
+export interface TaskList { items: ReviewTask[]; total: number; active: number; warnings: string[]; service: ServiceSummary; activity: AnalysisActivity }
+export const analysisActivity = () => request<AnalysisActivity>('/api/session/activity', {}, AbortSignal.timeout(8000));
 export interface AnalysisJob { id: string; kind: string; state: 'queued' | 'waiting-resources' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'expired'; message: string; partialReady: boolean; progress: { phase: Exclude<AnalysisPhase, 'preparing' | 'uploading'>; percent: number | null } | null; result?: { events: MediaAnalysisEvent[] }; owners: string[] }
 export const listTasks = (offset = 0, closed = false) => request<TaskList>('/api/tasks/list', { offset, limit: 8, closed }, AbortSignal.timeout(8000));
 export const getTask = (taskId: string) => request<{ task: ReviewTask }>('/api/tasks/get', { taskId });
@@ -98,6 +106,10 @@ export const changeTaskStatus = (taskId: string, status: 'waiting' | 'closed', c
 export const openTaskLocation = (taskId: string) => request<{ requested: boolean; directory: string }>('/api/tasks/open-location', { taskId });
 export const serviceSummary = () => request<ServiceSummary>('/api/session/summary', {});
 export const closeService = (runtimeId: string, discardUnsaved = false) => request<{ closing: boolean }>('/api/session/close', { runtimeId, confirm: true, discardUnsaved });
+export interface NativeLauncher { available: boolean; uri: string | null; rootId?: string; name: string; reason: string }
+export const nativeLauncher = () => request<NativeLauncher>('/api/session/launcher', {}, AbortSignal.timeout(8000));
+export const restartInfo = () => request<ServiceSummary & { impactRevision: string }>('/api/session/restart-info', {});
+export const restartService = (runtimeId: string, impactRevision: string, keepUnsaved: boolean) => request<{ restarting: boolean }>('/api/session/restart', { runtimeId, impactRevision, keepUnsaved, confirm: true });
 
 export interface WorkflowMedia { id: string; name: string; size: number; type: string; mtimeMs: number; fingerprint: string }
 export const currentWorkflowMedia = () => request<{ media: WorkflowMedia | null }>('/api/workflow/current', {}, AbortSignal.timeout(5000));

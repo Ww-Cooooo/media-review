@@ -2,11 +2,15 @@ param(
   [string]$Destination = (Join-Path $HOME '.claude\skills\media-review'),
   [string]$DesktopDirectory = [Environment]::GetFolderPath('DesktopDirectory'),
   [switch]$InitializeOnly,
+  [switch]$SkipPageLauncher,
+  [switch]$ReplacePageLauncher,
   [string]$Ffmpeg,
   [string]$Whisper,
   [string]$Model
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+if ($env:MEDIA_REVIEW_DATA_DIR -and -not [IO.Path]::IsPathFullyQualified($env:MEDIA_REVIEW_DATA_DIR)) { throw 'MEDIA_REVIEW_DATA_DIR必须是绝对路径；未安装或修改启动入口。' }
 $source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $node) { throw '未找到Node.js。请先安装Node.js 24或更新版本；本安装器不会自动下载。' }
@@ -91,9 +95,14 @@ $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $node
 $shortcut.Arguments = '"' + (Join-Path $target 'app\server\open.mjs') + '"'
 $shortcut.WorkingDirectory = Join-Path $target 'app'
-$shortcut.Description = '启动或复用本机Media Review，恢复已确认的校对工作'
+$shortcut.Description = '启动 Media Review 本机音视频校对室：按需启动或复用Node.js服务，不上传素材，不开机自启'
 $shortcut.WindowStyle = 7
 $shortcut.Save()
+if (-not $SkipPageLauncher) {
+  $homeData = if ($env:MEDIA_REVIEW_DATA_DIR) { $env:MEDIA_REVIEW_DATA_DIR } else { Join-Path $HOME '.media-review-desk' }
+  Assert-OrdinaryDirectory (Join-Path $homeData 'data')
+  & (Join-Path $target 'scripts/page-launcher.ps1') -AppRoot (Join-Path $target 'app') -DataRoot $homeData -Node $node -ReplaceExisting:$ReplacePageLauncher
+} else { Write-Output '已跳过Windows页面启动协议；仍可使用桌面入口。' }
 Write-Output ('Skill已就绪：' + $target)
 Write-Output ('桌面入口：' + $shortcutPath)
 Write-Output '双击图标会按需启动服务；不会开机自启、上传素材或自动执行用户意见。'

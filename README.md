@@ -8,13 +8,13 @@ Media Review 是一个本机音视频校对室，也是一套供 Agent 使用的
 
 ## 开始使用
 
-当前版本为 **0.3.0-beta.2 Windows 预发布版**，包含共享服务、独立校对任务和等待人工接手机制。完整安装包见 [v0.3.0-beta.2 发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.2)；旧 beta.1 包不包含本次修复。本项目仍处于测试阶段，不是稳定版承诺。
+当前版本为 **0.3.0-beta.3 Windows 预发布版**，完整安装包见 [v0.3.0-beta.3 发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.3)。本版新增页面重启与Windows本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏；旧版安装不会自动更新。本项目仍处于测试阶段，不是稳定版承诺。
 
 ### 下载安装（Windows）
 
 准备 **Node.js 24+、PowerShell 7+（命令为 `pwsh`）和支持素材编码的浏览器**，推荐 Microsoft Edge 或 Chrome。未安装运行环境时，可从 [Node.js 24 官方下载目录](https://nodejs.org/dist/latest-v24.x/)选择 Windows `.msi` 安装版，并按 [微软官方说明](https://learn.microsoft.com/zh-cn/powershell/scripting/install/install-powershell-on-windows)安装 PowerShell 7；详细选择与检查方法见[安装说明](docs/install-windows.md)。
 
-下载 [media-review-0.3.0-beta.2-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.2/media-review-0.3.0-beta.2-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
+下载 [media-review-0.3.0-beta.3-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.3/media-review-0.3.0-beta.3-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
 
 安装完成后双击桌面图标，选择一段视频或音频，标记时间点并保存第一条意见。在首页“校对任务”中查看对应任务，点“查看资料”找到保存位置。[完整安装及 beta.1 升级说明](docs/install-windows.md)。
 
@@ -61,12 +61,13 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 
 将占位符替换为实际导出的文件路径。入口启动／复用同用户、同数据根的兼容服务，返回独立 `task.id` 并排队自检；排队不是已经检查完成。记录这个 taskId 和 `inspection.id`，用 `status --task "<taskId>" --job "<inspection.id>" --result`查询这次实际结果。同一次调用重试可提供相同的 `--request-id "<UUID>"`；不同版本或独立意图使用新 UUID，`--label`可标明来源。
 
-**送片不等于再开一页。** 当前服务首次自动请求打开浏览器，之后只送到任务列表，不切走正在校对的片。不要让 Agent 收到网址后再调用浏览器工具新建窗口；用户需要重开时走桌面／启动文件。入口无法强制聚焦既有浏览器标签，也不能强制所有宿主遵从 Skill 文本。流程、异步回执与自检边界见 [Skill 正文](skill/SKILL.md)和[Agent 接入说明](docs/agent-workflow.md)。
+**送片不等于再开一页。** 当前服务首次自动请求打开浏览器，之后只送到任务列表，不切走正在校对的片。不要让 Agent 收到网址后再调用浏览器工具新建窗口；给用户本轮定位入口时应返回`taskUrl`及本机启动入口，而不是把共用`url`当作本对话的任务地址。beta.3可用`open --task "<taskId>"`重开指定已有任务，不另建任务；专属链接在次窗口也按指定任务打开，已有编辑窗口时仍须明确只读或接管。入口无法强制聚焦既有浏览器标签，也不能强制所有宿主遵从 Skill 文本。流程、异步回执与自检边界见 [Skill 正文](skill/SKILL.md)和[Agent 接入说明](docs/agent-workflow.md)。
 
 ## 校对时可以做什么
 
 - **准确指出位置：** 时间点、共同时间段、当前帧区域分别标记；截图属于独立参考帧，不把区间起点冒充截图时间。
 - **继续看、继续写：** 播放不改变意见目标，旧框不持续覆盖画面；已有意见先查看定位，主动点击修改才编辑。
+- **放大或全屏看视频（beta.3）：** 播放条右侧可页内放大或进入浏览器全屏，按Esc或“收起”返回。沿用同一个播放器，保留位置、播放速度和意见；浏览器拒绝全屏时提供页内放大。
 - **找回工作：** 首页查看历史、意见 JSON、参考图和草稿位置；桌面入口按需重开服务，已确认的恢复副本帮助继续校对。
 - **把反馈交给其他人：** 导出可读清单、结构化意见与相对路径参考图，不默认附带原视频、其他轮次或自动执行授权。
 
@@ -97,6 +98,16 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 
 暂时断线时保留当前输入，不要刷新有未保存内容的旧页；从桌面入口重新启动后，页面先核验新会话。Agent 登记的原文件可重新带入；已移动的文件可从任务列表“手选同版”，手选素材本来就需重选。最后未确认输入、清除浏览器数据、源文件变化或未知端口占用，不能保证零损失。
 
+### 页面重启与本机启动入口（beta.3）
+
+服务在线时可从“任务操作 → 重启校对服务”核对全部窗口、分析和未保存输入，再明确重启；新会话通过真实身份与认证检查后才恢复连接。断线后，页头连接状态右侧显示“重启服务”；它与下方断线提示内的“启动 Media Review 本机校对室”使用同一个已配置入口，请求Windows唤起固定的Node.js启动入口，不刷新旧页、不默认另开浏览器；原端口被占用时可能打开新地址，旧页输入仍须保留。这不是网页直接执行任意本机命令。
+
+安装器默认注册当前用户、按资料根隔离的专用启动协议；不需管理员、不增加常驻启动器或开机自启。浏览器可能要求确认，系统可能显示Node.js或未知发布者，不能保证所有安全软件放行。入口用途、跳过／取消登记与安全软件拦截说明见[Windows安装说明](docs/install-windows.md)和[启动入口说明](skill/启动入口说明.txt)。公开beta.2不包含本节功能。
+
+### 看见正在分析的素材（beta.3）
+
+有活动分析时，页面左下角显示可收起的浮动提示，标明素材、实际处理阶段、所属校对任务与本机服务；排队、等待资源和上传分别显示。点击素材先核验当前状态，再请求定位已打开的对应校对页；浏览器未允许切页或原页不响应时，可在本页安全定位，不默认另开浏览器、抢编辑权或取消其他分析。仅展示本服务已登记的对象，不扫描整机网页或其他程序；旧入口未登记来源时明确说明，不能编造归属。
+
 ## 当前限制
 
 - 当前交付目标是 Windows 桌面测试版；其他系统的一键安装、另一台电脑的兼容性和所有宿主的自动发现没有经过同等验证。
@@ -111,7 +122,7 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 
 ```sh
 npm test
-npm run build:skill -- --out release/media-review-0.3.0-beta.2
+npm run build:skill -- --out release/media-review-0.3.0-beta.3
 ```
 
 测试使用隔离目录，不需要真实用户媒体。构建命令生成完整 Skill 文件夹；它不执行安装、不上传或创建 GitHub Release，输出目录已存在时不会覆盖。安装包会保留自有源码许可与第三方声明。目录关系、测试范围与安装器参数见[开发说明](docs/development.md)。

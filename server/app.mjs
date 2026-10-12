@@ -13,6 +13,8 @@ import { ReviewService } from './review-service.mjs';
 import { exportReview } from './review-export.mjs';
 import { MAX_WORKSPACE_BYTES, ReviewWorkflow } from './review-workflow.mjs';
 import { listReviewHistory, openReviewLocation, openSystemLocation } from './review-history.mjs';
+import { prepareRestart } from './restart-worker.mjs';
+import { readNativeLauncher } from './native-launcher.mjs';
 
 const DEFAULT_IDLE_MS = 10 * 60 * 1000;
 const MAX_REQUESTS_PER_MINUTE = 3000;
@@ -217,6 +219,8 @@ export async function createReviewServer({
   locationOpener = openSystemLocation,
   clock = () => performance.now(),
   serviceOptions = {},
+  restartPreparer = prepareRestart,
+  nativeLauncherReader = readNativeLauncher,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('端口无效');
   if (!Number.isInteger(idleMs) || idleMs < 1000) throw new Error('空闲时限无效');
@@ -245,8 +249,9 @@ export async function createReviewServer({
   const token = randomBytes(32).toString('hex');
   const nonce = randomBytes(18).toString('base64');
   let windowStarted = clock(), emptySince = clock(), count = 0, inFlightBytes = 0, inFlight = 0;
-  let server, closing;
+  let server, closing, restarting = false, streamingAnalysis = 0, mediaTransfers = 0;
   const identity = { ok: true, app: 'ai-carry-media-review', version: 2, protocol: SERVICE_PROTOCOL, runtimeId, uiRevision: UI_REVISION, rootId, dataId };
+  state.runtimeId = runtimeId;
   const lifecycleFile = path.join(local, 'lifecycle.json');
   let lifecycleWritable = true, previous = null;
   try {
@@ -265,9 +270,9 @@ export async function createReviewServer({
   })();
 
   server = createServer(async (req, res) => {
-    let reserved = 0, admitted = false;
+    let reserved = 0, admitted = false, analysisStream = false;
     try {
-      if (closing) return error(res, 503, 'service_closing', '校对室正在退出，已有资料保留');
+      if (closing || restarting) return error(res, 503, 'service_closing', '校对室正在退出或重启，已有资料保留');
       const address = server.address();
       const origin = `http://127.0.0.1:${address.port}`;
       const host = `127.0.0.1:${address.port}`;
@@ -339,6 +344,7 @@ export async function createReviewServer({
           const media = state.tasks.headers.has(body.id) ? await state.media(body.id, context, body.readOnly === true) : await workflow.media(body.id);
           res.writeHead(200, { 'Content-Type': media.type, 'Content-Length': media.size, 'Cache-Control': 'no-store' });
           const stream = media.task ? Readable.from(state.mediaStream(media)) : media.handle.createReadStream();
+          mediaTransfers++; stream.once('close', () => { mediaTransfers--; });
           res.once('close', () => stream.destroy()); stream.on('error', () => res.destroy()).pipe(res); return;
         }
         if (pathname === '/api/workspace/load') {
@@ -394,6 +400,7 @@ export async function createReviewServer({
             throw new RecordValidationError('完成请求无效');
           }
           mediaAnalysis.assertOwner(body.id, context);
+          analysisStream = true; streamingAnalysis++;
           res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' });
           res.on('close', () => { if (!res.writableEnded) void mediaAnalysis.cancel(body.id); });
           try {
@@ -444,6 +451,24 @@ export async function createReviewServer({
           const saved = await serial(`${directory}:${record.media.fingerprint}`, () => saveRecord(directory, record, body.baseRevision));
           return json(res, 200, { saved: true, ...saved });
         }
+        if (pathname === '/api/session/launcher') return json(res, 200, await nativeLauncherReader(local));
+        if (pathname === '/api/session/restart-info') {
+          const summary = state.summary();
+          return json(res, 200, { ...summary, impactRevision: documentRevision(summary) });
+        }
+        if (pathname === '/api/session/restart') {
+          const summary = state.summary();
+          if (body.confirm !== true || body.runtimeId !== runtimeId || body.impactRevision !== documentRevision(summary)) throw new ReviewError('当前服务或使用情况已变化，请重新核对重启影响；原服务未退出。', 'restart_confirmation');
+          if (summary.unsavedWindows && body.keepUnsaved !== true) throw new ReviewError('仍有窗口报告未保存输入，请先保存，或明确选择保留本页与已确认恢复副本后重启。', 'unsaved_windows');
+          if (mediaTransfers || inFlight - streamingAnalysis > 1) throw new ReviewError('仍有素材带入、保存或其他短操作正在确认，请等回执完成再重启；未中断写入。', 'requests_in_flight');
+          restarting = true;
+          let successor;
+          try { successor = await restartPreparer(root, runtimeId); }
+          catch (cause) { restarting = false; throw cause; }
+          json(res, 200, { restarting: true, retained: true });
+          void close('user-restart').then(() => successor.commit()).catch(() => successor.abort());
+          return;
+        }
         if (pathname === '/api/session/close') {
           if (body.confirm !== true || body.runtimeId !== runtimeId) throw new ReviewError('退出会影响整个校对室，请先查看使用情况并明确确认当前服务', 'close_confirmation');
           if (state.clients.summary().unsavedWindows > (body.discardUnsaved === true ? 64 : 0)) throw new ReviewError('仍有窗口报告未保存输入，请先保存，或明确选择保留恢复副本后退出', 'unsaved_windows');
@@ -464,7 +489,7 @@ export async function createReviewServer({
         return error(res, cause.message.startsWith('已有记录') ? 409 : 400, 'invalid_record', cause.message);
       }
       error(res, 500, 'internal_error', '本地操作未能确认，请核对本机磁盘与记录；原输入保留');
-    } finally { if (admitted) { inFlightBytes -= reserved; inFlight--; } }
+    } finally { if (analysisStream) streamingAnalysis--; if (admitted) { inFlightBytes -= reserved; inFlight--; } }
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;

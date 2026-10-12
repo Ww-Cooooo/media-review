@@ -26,7 +26,7 @@ const built = await execute(process.execPath, [vite, 'build', '--mode', 'standal
 console.log(built.stdout);
 if (built.stderr) console.error(built.stderr);
 const copy = async (from, to) => fs.cp(from, to, { recursive: true, force: false, errorOnExist: true });
-for (const name of ['SKILL.md', 'README.md', 'scripts', '安装 Media Review.cmd', '初始化桌面入口.cmd', '打开 Media Review.cmd']) await copy(path.join(root, 'skill', name), path.join(output, name));
+for (const name of ['SKILL.md', 'README.md', 'scripts', '安装 Media Review.cmd', '初始化桌面入口.cmd', '打开 Media Review.cmd', '启动 Media Review 本机音视频校对室.cmd', '启动入口说明.txt']) await copy(path.join(root, 'skill', name), path.join(output, name));
 await copy(path.join(root, 'LICENSE'), path.join(output, 'LICENSE'));
 const app = path.join(output, 'app');
 await fs.mkdir(path.join(app, 'server'), { recursive: true });

@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 
-export const UI_REVISION = 'lifecycle-20261011-r2';
+export const UI_REVISION = 'task-player-20261011-r1';
 export const SERVICE_PROTOCOL = 3;
 export function pathIdentity(value) {
   const normalized = path.resolve(value).replaceAll('\\', '/');

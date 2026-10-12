@@ -254,7 +254,8 @@ export class MediaAnalysisService {
       job.processing = true;
       if (job.handle) { await job.handle.close(); job.handle = null; }
     });
-    const perform = () => this.processMedia ? this.processMedia(job, onEvent, observer => this.process(job, observer)) : this.process(job, onEvent);
+    const emit = event => { if (event.kind === 'progress') job.progress = { phase: event.phase, percent: event.percent }; onEvent(event); };
+    const perform = () => this.processMedia ? this.processMedia(job, emit, observer => this.process(job, observer)) : this.process(job, emit);
     try {
       if (this.scheduler) await this.scheduler.transient(async signal => {
         const abort = () => { job.cancelled = true; job.controller.abort(); };
@@ -264,7 +265,7 @@ export class MediaAnalysisService {
       }, {
         signal: job.controller.signal, owner: job.owner?.taskId,
         memoryBytes: this.resourceBudget ? await this.resourceBudget() : undefined,
-        onQueued: async queueId => { job.queueId = queueId; await this.onQueued?.(job, queueId); onEvent({ kind: 'progress', phase: 'queued', percent: null }); },
+        onQueued: async queueId => { job.queueId = queueId; await this.onQueued?.(job, queueId); if (!job.progress) emit({ kind: 'progress', phase: 'queued', percent: null }); },
       });
       else await perform();
     } finally {

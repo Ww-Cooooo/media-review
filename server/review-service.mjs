@@ -49,6 +49,25 @@ export class ReviewService {
   summary() {
     return { ...this.clients.summary(), pendingTasks: this.tasks.activeCount, uploads: this.uploads.jobs.size, analysis: this.queue.summary() };
   }
+  analysisActivity() {
+    this.clients.prune();
+    const active = ['running', 'queued', 'waiting-resources'];
+    const uploads = [...this.uploads.jobs.values()];
+    const describe = (job, upload = null) => {
+      const ownerIds = upload?.owner?.taskId ? [upload.owner.taskId] : job.owners ?? [];
+      const tasks = ownerIds.map(id => this.tasks.headers.get(id)).filter(Boolean).map(task => ({ id: task.id, title: task.title, label: task.label, name: task.media.name, manual: task.manual }));
+      const pages = [...this.clients.clients.entries()].filter(([id, page]) => upload?.owner?.clientId ? id === upload.owner.clientId && page.taskId === (upload.owner.taskId ?? null) : ownerIds.includes(page.taskId)).map(([clientId, page]) => ({ clientId, taskId: page.taskId, visible: page.visible }));
+      const progress = upload && job.state === 'running' ? upload.progress ?? null : job.progress ?? null;
+      return { id: job.id, kind: job.kind, state: job.state, progress, mediaName: tasks[0]?.name ?? '来源未登记的媒体', tasks, pages };
+    };
+    const items = [...this.queue.jobs.values()].filter(job => active.includes(job.state)).sort((a, b) => Number(b.state === 'running') - Number(a.state === 'running') || b.priority - a.priority || a.order - b.order).map(job => describe(job, uploads.find(upload => upload.queueId === job.id)));
+    for (const upload of uploads) {
+      if (items.some(item => item.id === upload.queueId)) continue;
+      const state = upload.cancelled ? 'cancelling' : !upload.processing ? 'uploading' : upload.queueId ? 'finalizing' : 'preparing';
+      items.push(describe({ id: upload.id, kind: 'browser-upload', state, progress: { phase: state, percent: state === 'uploading' ? Math.floor(upload.written / upload.size * 100) : null } }, upload));
+    }
+    return { runtimeId: this.runtimeId, items };
+  }
   get busy() { return this.tasks.activeCount > 0 || this.tasks.warnings.length > 0 || this.clients.summary().windows > 0 || this.queue.activeCount > 0 || this.uploads.jobs.size > 0; }
   scopeKey(context, fingerprint) { return context?.taskId ? `task:${context.taskId}` : `legacy:${fingerprint}`; }
   async assertMedia(context, identity) {
@@ -182,7 +201,7 @@ export class ReviewService {
         return [kind, ['queued', 'running', 'waiting-resources'].includes(job.state) && !job.owners.includes(task.id) ? 'detached' : job.state];
       }))) })));
       data.warnings = [...data.warnings, ...this.queue.warnings, ...(this.cacheUnavailable || this.cacheWarning ? ['可重建缓存暂不可用；仍可重新分析，不影响正式意见。'] : []), ...(this.uploads.cleanupWarning ? ['部分临时上传未能清理，请查看本机临时目录；原资料保留。'] : [])];
-      return { ...data, service: this.summary() };
+      return { ...data, service: this.summary(), activity: this.analysisActivity() };
     }
     if (pathname === '/api/tasks/get') return { task: this.tasks.headers.get(taskIdentity(body.taskId)) ?? await this.tasks.read(body.taskId) };
     if (pathname === '/api/tasks/status') {
@@ -218,6 +237,7 @@ export class ReviewService {
     }
     if (pathname === '/api/clients/release') { this.mediaViews.delete(body.clientId); return this.clients.release(body.clientId); }
     if (pathname === '/api/browser/claim') return this.clients.browserClaim(body.force === true);
+    if (pathname === '/api/session/activity') return this.analysisActivity();
     if (pathname === '/api/session/summary') return this.summary();
     if (pathname === '/api/jobs/enqueue') return { job: await this.enqueue(body.taskId, body.kind, body.durationMs) };
     if (pathname === '/api/jobs/status') return { job: await this.queue.read(body.id, body.result === true) };

@@ -50,7 +50,7 @@ npm test
 在仓库根目录执行；构建器会将自有源码许可及第三方声明一起带入完整包：
 
 ```sh
-npm run build:skill -- --out release/media-review-0.3.0-beta.2
+npm run build:skill -- --out release/media-review-0.3.0-beta.3
 ```
 
 输出应包含 SKILL.md、README、LICENSE、`skill-package.json`、Windows 启动／安装文件、`scripts/` 和自包含的 `app/`。包内 `app/` 带构建资源与原生 Node 服务，终端用户不需要 npm 或 node_modules，但仍须安装 Node.js 24+、PowerShell 7+ 及浏览器。
@@ -59,7 +59,7 @@ npm run build:skill -- --out release/media-review-0.3.0-beta.2
 
 ## 安装器与升级
 
-完整包的 `scripts/install.ps1` 支持 `-Destination`、`-DesktopDirectory`、`-InitializeOnly` 和可选媒体工具绑定。隔离验证必须同时指定新的安装位置、桌面位置和数据根，不能把默认真实安装当成测试。
+完整包的 `scripts/install.ps1` 支持 `-Destination`、`-DesktopDirectory`、`-InitializeOnly`、`-SkipPageLauncher`、`-ReplacePageLauncher` 和可选媒体工具绑定。页面启动协议默认只注册当前用户、按资料根隔离的固定start动作，不开机自启、不常驻。已有另一安装副本时默认保留，显式Replace也不覆盖未知归属；`scripts/page-launcher.ps1 -Action Unregister`只撤回匹配本副本的登记。隔离验证必须同时指定新的安装位置、桌面位置和数据根；协议测试只注册自身全新根的唯一键，核验归属后清除，不能把默认真实安装当成测试。
 
 相同包可复用；不同版本、未知内容或本机修改会保留并停止，不静默覆盖。旧版本的稳定 Skill ID 和历史数据目录名继续保留；对外显示名不应成为删除或迁移用户数据的理由。
 
@@ -71,7 +71,7 @@ npm run build:skill -- --out release/media-review-0.3.0-beta.2
 
 ## 共享服务、容量与保留
 
-以下机制对应0.3.0-beta.2，旧beta.1包不会自动更新。数据根级启动门闩覆盖检查／spawn／登记，运行门闩由服务整个生命周期持有；Windows使用命名管道，退出由OS释放，不凭PID或陈旧时间抢锁。跨兼容安装副本复用已选定runtimeRoot，核对rootId、dataId、runtimeId、协议和UI版本；不兼容版本明确拒绝。
+以下共享机制自0.3.0-beta.2引入，beta.3沿用；旧beta.1包不会自动更新。数据根级启动门闩覆盖检查／spawn／登记，运行门闩由服务整个生命周期持有；Windows使用命名管道，退出由OS释放，不凭PID或陈旧时间抢锁。跨兼容安装副本复用已选定runtimeRoot，核对rootId、dataId、runtimeId、协议和UI版本；不兼容版本明确拒绝。
 
 新任务以UUID落盘，requestId幂等重试。正式意见按任务隔离；同任务保存按加载版本串行比较，覆盖前保留versions。编辑租约使用单调时钟，仅提供交互归属，不能代替提交版本校验。客户端恢复按taskId／clientId捕获上下文，不让晚到的旧任务请求改写新任务。旧资料的共享历史不凭多个inbox登记自动拆分。
 

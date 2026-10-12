@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App, Alert, Badge, Button, Drawer, Dropdown, Empty, Form, Input, Modal, Popconfirm, Segmented, Select, Slider, Switch, Tag } from 'antd';
 import { ArrowLeftOutlined, AudioOutlined, ClockCircleOutlined, CloseOutlined, CommentOutlined, DeleteOutlined, EditOutlined, FolderOpenOutlined, HomeOutlined, InfoCircleOutlined, PauseOutlined, PlayCircleOutlined, PlusOutlined, SafetyCertificateOutlined, SaveOutlined, ScissorOutlined, SelectOutlined, SoundOutlined, VideoCameraOutlined } from '@ant-design/icons';
+import { FullscreenOutlined, FullscreenExitOutlined, ExpandAltOutlined, ShrinkOutlined } from '@ant-design/icons';
 import { ReactLenis } from 'lenis/react';
+import { useVideoPresentation } from './lib/use-video-presentation';
+import './video-presentation.css';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { ServiceBadge } from './components/ServiceBadge';
-import { ServiceNotice } from './components/ServiceNotice';
+import { ServiceNotice, ServiceRecoveryButton } from './components/ServiceNotice';
 import { ReviewHome } from './components/ReviewHome';
 import { ReviewTasks } from './components/ReviewTasks';
 import { WaveData } from './components/WaveData';
 import { useReviewTasks } from './lib/use-review-tasks';
+import { useAnalysisLocator } from './lib/use-analysis-locator';
+import { AnalysisActivityNotice } from './components/AnalysisActivityNotice';
 import './review-lifecycle.css';
 import { FrameCanvas } from './components/FrameCanvas';
 import { ReviewWaveform } from './components/ReviewWaveform';
@@ -18,7 +23,7 @@ import { AudioCompare } from './components/AudioCompare';
 import { TranscriptPanel, type TranscriptCue } from './components/TranscriptPanel';
 import { ReviewHandoffDialog } from './components/ReviewHandoffDialog';
 import { createReviewHandoff, type ReviewHandoff } from './lib/review-handoff';
-import { loadRecord, saveRecord, loadReference, saveReference, workflowFile, loadWorkspace, saveWorkspace, archiveWorkspace, exportRecord, registerManualTask, claimEditing, heartbeat, releaseClient, changeTaskStatus, serviceSummary, closeService, setReviewContext, reviewContext, REVIEW_CLIENT_ID, ReviewAPIError, getTask, type ReviewTask } from './lib/api';
+import { loadRecord, saveRecord, loadReference, saveReference, workflowFile, loadWorkspace, saveWorkspace, archiveWorkspace, exportRecord, registerManualTask, claimEditing, heartbeat, releaseClient, changeTaskStatus, serviceSummary, closeService, nativeLauncher, restartInfo, restartService, type NativeLauncher, setReviewContext, reviewContext, REVIEW_CLIENT_ID, ReviewAPIError, getTask, type ReviewTask } from './lib/api';
 import { useServiceStatus } from './lib/use-service-status';
 import { cacheWorkspace, cachedWorkspace, type ReviewWorkspace } from './lib/review-workspace';
 import { useMediaAnalysis } from './lib/use-media-analysis';
@@ -27,7 +32,7 @@ import { clampMs, fingerprintFile, formatTime, KIND_LABEL, parseTime, REFERENCE_
 
 interface OpenMedia { file: File; local: boolean; url: string; isAudio: boolean; identity: MediaIdentity; width: number; height: number }
 type View = { kind: 'new' } | { kind: 'detail'; id: string } | { kind: 'edit'; id: string };
-type Action = { type: 'new' } | { type: 'target'; mode: TargetMode; position: number; cue?: TranscriptCue } | { type: 'detail'; note: ReviewNote } | { type: 'restore' } | { type: 'file'; file: File; task?: ReviewTask; newTask?: boolean } | { type: 'task'; task: ReviewTask; readOnly?: boolean } | { type: 'suspend' } | { type: 'end' } | { type: 'exit' } | { type: 'finish' };
+type Action = { type: 'new' } | { type: 'target'; mode: TargetMode; position: number; cue?: TranscriptCue } | { type: 'detail'; note: ReviewNote } | { type: 'restore' } | { type: 'file'; file: File; task?: ReviewTask; newTask?: boolean; readOnly?: boolean } | { type: 'task'; task: ReviewTask; readOnly?: boolean } | { type: 'suspend' } | { type: 'end' } | { type: 'exit' } | { type: 'finish' };
 const MODE_LABEL = { point: '时间点', range: '时间段', frame: '画面位置' };
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 function fromNote(note: ReviewNote): ReviewDraft {
@@ -39,6 +44,7 @@ function fromNote(note: ReviewNote): ReviewDraft {
 export function ReviewDesk() {
   const { message } = App.useApp();
   const root = useRef<HTMLDivElement>(null), fileInput = useRef<HTMLInputElement>(null), player = useRef<HTMLMediaElement>(null), stage = useRef<HTMLDivElement>(null);
+  const videoSurface = useRef<HTMLElement>(null), requestedTask = useRef(new URLSearchParams(location.search).get('task'));
   const generation = useRef(0), savingRef = useRef(false), captureSequence = useRef(0), copySequence = useRef(0), gestureBackup = useRef<ReviewDraft | null>(null);
   const auditionEnd = useRef<number | null>(null), oldVolume = useRef(75);
   const [media, setMedia] = useState<OpenMedia | null>(null);
@@ -59,6 +65,35 @@ export function ReviewDesk() {
   const [reduced, setReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [captureCount, setCaptureCount] = useState(0);
   const service = useServiceStatus();
+  const [launcher, setLauncher] = useState<NativeLauncher | null>(null);
+  const [recoveryWait, setRecoveryWait] = useState<{ kind: 'start' | 'restart'; runtimeId: string } | null>(null);
+  const [launchFeedback, setLaunchFeedback] = useState('');
+  const recoveryAction = useRef(false);
+  useEffect(() => {
+    if (service.state !== 'online') return;
+    let stopped = false;
+    void nativeLauncher().then(value => {
+      if (!stopped) setLauncher(value.available && value.uri !== `media-review-${service.dataId}://start` ? { ...value, available: false, uri: null, reason: '启动入口与当前资料根不匹配，未唤起。' } : value);
+    }).catch(() => { /* 入口查询失败不抹去本页已核验的离线唤起地址。 */ });
+    return () => { stopped = true; };
+  }, [service.state, service.runtimeId, service.dataId]);
+  useEffect(() => {
+    if (!recoveryWait) return;
+    if (service.state === 'online' && (recoveryWait.kind === 'start' || service.runtimeId !== recoveryWait.runtimeId)) {
+      recoveryAction.current = false; setRecoveryWait(null); setLaunchFeedback(''); message.success('Media Review本机服务已重新连接；当前任务与保存权限继续单独核验。'); return;
+    }
+    const timer = setTimeout(() => {
+      recoveryAction.current = false; setRecoveryWait(null);
+      setLaunchFeedback('尚未确认Media Review恢复连接。可能取消了系统确认、入口被安全软件阻止、端口已变化或存在版本冲突。请保留旧页输入，检查系统提示，必要时从桌面入口重开；不要关闭防护。');
+    }, 60_000);
+    return () => clearTimeout(timer);
+  }, [recoveryWait, service.state, service.runtimeId, message]);
+  function requestNativeStart() {
+    if (recoveryAction.current || !launcher?.rootId) return false;
+    recoveryAction.current = true; setLaunchFeedback(''); setRecoveryWait({ kind: 'start', runtimeId: service.runtimeId });
+    window.dispatchEvent(new CustomEvent('review-native-start', { detail: { rootId: launcher.rootId, dataId: service.dataId } }));
+    return true;
+  }
   const serviceError = service.state === 'incompatible' ? '当前页面与服务身份或版本不兼容。请保留输入，从桌面的“Media Review”或当前启动文件重新打开。' : '';
   const tasks = useReviewTasks(service.state === 'online');
   const [activeTask, setActiveTask] = useState<ReviewTask | null>(null), [editing, setEditing] = useState(false), [tasksOpen, setTasksOpen] = useState(false);
@@ -66,7 +101,7 @@ export function ReviewDesk() {
   const [frameIndexOpen, setFrameIndexOpen] = useState(false), [compareOpen, setCompareOpen] = useState(false), [visible, setVisible] = useState(!document.hidden);
   const [conflict, setConflict] = useState<{ latest: Awaited<ReturnType<typeof loadRecord>>; finish: boolean; allDrafts: boolean } | null>(null);
   const manualRequest = useRef({ generation: -1, id: '' });
-  const chosenNewTask = useRef(false), manualNewTask = useRef(false);
+  const chosenNewTask = useRef(false), chosenReadOnly = useRef(false), manualNewTask = useRef(false);
   const chosenManualTask = useRef<ReviewTask | null>(null), initialPick = useRef(false), manualRegistration = useRef('');
   const [baseNotes, setBaseNotes] = useState<ReviewNote[]>([]);
   const [recoveryStatus, setRecoveryStatus] = useState('');
@@ -75,6 +110,7 @@ export function ReviewDesk() {
   const restoring = useRef(true);
   const workspaceTail = useRef<Promise<unknown>>(Promise.resolve());
   const durationMs = media?.identity.durationMs ?? 0;
+  const presentation = useVideoPresentation(videoSurface, screen === 'review' && !!media && !media.isAudio && !listenOnly, text => message.info(text));
   const analysis = useMediaAnalysis(media?.file ?? null, durationMs, editing && !!activeTask && service.state === 'online' && screen === 'review', activeTask && media?.local ? { ...activeTask, manual: true } : activeTask);
   const ordered = useMemo(() => sortedNotes(notes), [notes]);
   const selected = view.kind !== 'new' ? notes.find(note => note.id === view.id) : null;
@@ -94,6 +130,17 @@ export function ReviewDesk() {
   const activeCue = analysis.cues.find(cue => cue.startMs <= currentMs && currentMs < cue.endMs);
   const activity = useRef({ media, activeTask, busy, unsaved, editing, workspace: null as ReviewWorkspace | null });
   activity.current = { media, activeTask, busy, unsaved, editing, workspace: media && durationMs ? { format: 'media-review-workspace/v1', media: media.identity, currentMs: clampMs(Math.round((player.current?.currentTime ?? currentMs / 1000) * 1000), durationMs), notes, baseNotes, dirty, newDraft, editDraft, parked, view } : null };
+
+  const analysisLocator = useAnalysisLocator(service.state === 'online', service.dataId, service.runtimeId, activeTask?.id ?? null, () => {
+    if (!activity.current.media) return;
+    navigate('review'); requestAnimationFrame(() => root.current?.querySelector('.transcript-content')?.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  }, item => {
+    const target = item.tasks.find(task => item.pages.some(page => page.taskId === task.id)) ?? item.tasks[0];
+    if (!target) { message.info('旧入口没有登记可定位的任务，无法安全跳转；当前输入仍保留，请核对原校对窗口。'); return; }
+    Modal.confirm({ title: item.pages.length ? '浏览器未确认切到原校对页' : '原校对页暂无响应，在本页定位？', content: <><p>正在处理：{item.mediaName}</p><p>校对任务：{target.title} · {target.id.slice(0, 8)}。所属本机服务：{location.host}。</p><p>不会另开浏览器、取消原分析或抢编辑权。本页有未保存输入时，仍会先提示保留。{target.manual ? '这份素材由用户手选，需要重新选择同一版本；不会读取其他文件。' : '可在本页加载只读对照，不额外启动分析。'}</p></>, okText: target.manual ? '选择同版素材定位' : '在本页只读定位', cancelText: '保留当前页面', onOk: async () => {
+      const { task } = await getTask(target.id); request({ type: 'task', task, readOnly: true });
+    } });
+  }, text => message.info(text));
 
   function navigate(next: 'home' | 'review', history = true) {
     player.current?.pause(); setScreen(next); setSelecting(null); captureSequence.current++; setCapturing(false);
@@ -123,13 +170,15 @@ export function ReviewDesk() {
     if (view.kind === 'edit') setEditDraft(old => ({ ...old, ...change })); else setNewDraft(old => ({ ...old, ...change }));
   }
   function focusOpinion() {
-    requestAnimationFrame(() => {
+    if (presentation.expanded || presentation.fullscreen) { void presentation.leave().then(() => requestAnimationFrame(focusOpinionInput)); return; }
+    requestAnimationFrame(focusOpinionInput);
+  }
+  function focusOpinionInput() {
       const input = root.current?.querySelector<HTMLTextAreaElement>('#opinion-text');
       if (!input) return;
       const bounds = input.getBoundingClientRect();
       if (bounds.bottom > innerHeight - 20 || bounds.top < 100) input.scrollIntoView({ block: 'nearest', behavior: reduced ? 'instant' : 'smooth' });
       input.focus({ preventScroll: true });
-    });
   }
   function actualTime() { return clampMs(Math.round((player.current?.currentTime ?? currentMs / 1000) * 1000), durationMs); }
   function seek(ms: number) {
@@ -221,7 +270,7 @@ export function ReviewDesk() {
     };
     const observer = new ResizeObserver(fit); observer.observe(element); fit();
     return () => observer.disconnect();
-  }, [media?.url, media?.width, media?.height, listenOnly, screen]);
+  }, [media?.url, media?.width, media?.height, listenOnly, screen, presentation.expanded, presentation.fullscreen]);
 
   useGSAP(() => {
     if (screen !== 'home') return;
@@ -285,7 +334,7 @@ export function ReviewDesk() {
     finally { if (sequence === captureSequence.current) setCapturing(false); }
   }
 
-  async function openFile(file: File, task: ReviewTask | null = null, local = true, newTask = false) {
+  async function openFile(file: File, task: ReviewTask | null = null, local = true, newTask = false, readOnly = false) {
     manualNewTask.current = newTask;
     if (savingRef.current) return;
     const isAudio = file.type.startsWith('audio/') || /\.(m4a|mp3|wav|aac|ogg|flac)$/i.test(file.name);
@@ -298,7 +347,7 @@ export function ReviewDesk() {
       if (!task || reviewContext().taskId !== task.id) {
         await releaseClient().catch(() => {});
         setReviewContext(null, null); setEditing(false);
-        if (task) { const lease = await claimEditing(task); setReviewContext(task.id, lease.leaseId); setEditing(lease.editing); }
+        if (task) { const lease = readOnly ? { editing: false, leaseId: null } : await claimEditing(task); setReviewContext(task.id, lease.leaseId); setEditing(lease.editing); }
       }
       if (number !== generation.current) return;
       setActiveTask(task); setRecordRevision(null); setFrameIndexOpen(false); setCompareOpen(false); setConflict(null); setRecoveryConflict(null); setRecoveryCompare(false);
@@ -308,10 +357,10 @@ export function ReviewDesk() {
       initialPick.current = true; setTasksOpen(false); navigate('review');
     } catch (cause) { message.error(cause instanceof Error ? cause.message : '素材无法读取。'); setBusy(null); }
   }
-  function chooseFile(kind?: 'video' | 'audio', task: ReviewTask | null = null, newTask = false) {
+  function chooseFile(kind?: 'video' | 'audio', task: ReviewTask | null = null, newTask = false, readOnly = false) {
     if (serviceError) { message.error(serviceError); return; }
     if (busy === 'saving' || !fileInput.current) return;
-    chosenManualTask.current = task; chosenNewTask.current = newTask;
+    chosenManualTask.current = task; chosenNewTask.current = newTask; chosenReadOnly.current = readOnly;
     fileInput.current.accept = kind === 'video' ? 'video/*,.mp4,.mov,.webm' : kind === 'audio' ? 'audio/*,.wav,.m4a,.mp3,.flac' : 'audio/*,video/*,.mp4,.wav,.m4a,.mp3';
     fileInput.current.click();
   }
@@ -330,7 +379,7 @@ export function ReviewDesk() {
   async function openTask(task: ReviewTask, readOnly = false) {
     if (task.status !== 'waiting') { setRecoveryStatus('此任务已结束或属于尚未选择的旧交接。请在任务列表明确重开／继续，未自动改变状态。'); tasks.setClosed(true); setTasksOpen(true); return; }
     if (activity.current.activeTask?.id === task.id && activity.current.media) { setTasksOpen(false); navigate('review'); return; }
-    if (task.manual) { chooseFile(undefined, task); return; }
+    if (task.manual) { chooseFile(undefined, task, false, readOnly); return; }
     const number = ++generation.current;
     setBusy('opening');
     try {
@@ -372,10 +421,26 @@ export function ReviewDesk() {
       else setFeedback(cause instanceof Error ? cause.message : '结束任务未确认，当前输入保留');
     }
   }
+  async function requestRestart() {
+    if (recoveryAction.current || service.state !== 'online' || activity.current.busy) return;
+    recoveryAction.current = true;
+    try {
+      const summary = await restartInfo();
+      Modal.confirm({ title: '重启整个校对室的服务？', content: <><p>这会影响共用服务的 {summary.windows} 个窗口、{summary.pendingTasks} 项待校对任务，以及 {summary.analysis.running + summary.analysis.queued} 项运行或排队分析、{summary.uploads} 份上传。</p><p>{summary.unsavedWindows ? `${summary.unsavedWindows} 个窗口最近报告未保存输入。请先让各窗口保存；仍重启时只保留已确认恢复副本与各页当前输入，不代表已正式保存。` : '本页先回传恢复副本；意见和待校对任务保留，未完成分析会中断。'}</p><p>先准备Media Review本机重启入口，再退出旧服务。不刷新或关闭页面，不上传素材；只有真实连接检查通过才算恢复。端口变化时可能另开新入口，请保留旧页。</p></>, okText: summary.unsavedWindows ? '保留输入并重启服务' : '重启校对服务', cancelText: '先不重启', okButtonProps: { danger: true }, onCancel: () => { recoveryAction.current = false; }, onOk: async () => {
+        try {
+          await preserveCurrent();
+          const result = await restartService(service.runtimeId, summary.impactRevision, summary.unsavedWindows > 0);
+          if (!result.restarting) throw new Error('重启请求未确认，当前输入保留');
+          setLaunchFeedback(''); setRecoveryWait({ kind: 'restart', runtimeId: service.runtimeId });
+          window.dispatchEvent(new Event('review-restart'));
+        } catch (cause) { recoveryAction.current = false; message.error(cause instanceof Error ? cause.message : '重启未确认，当前输入保留'); throw cause; }
+      } });
+    } catch (cause) { recoveryAction.current = false; message.error(cause instanceof Error ? cause.message : '重启影响未能核对，原服务未退出'); }
+  }
   async function requestExit() {
     try {
       const summary = await serviceSummary();
-      Modal.confirm({ title: '退出整个校对室？', content: <><p>当前有 {summary.pendingTasks} 项待校对、{summary.windows} 个窗口、{summary.analysis.running + summary.analysis.queued} 项排队或运行中的分析。</p><p>{summary.unsavedWindows ? `${summary.unsavedWindows} 个窗口最近报告有未保存输入。建议先在各窗口保存，或取消退出。` : '意见与已确认恢复副本保留；未完成分析会标为中断。'}</p><p>不会关闭浏览器或删除资料。真正退出后，需从桌面或启动文件重开；网页不能自行启动 Node。</p></>, okText: summary.unsavedWindows ? '保留已确认副本并退出全局' : '退出整个校对室', cancelText: '取消退出', okButtonProps: { danger: true }, onOk: async () => {
+      Modal.confirm({ title: '退出整个校对室？', content: <><p>当前有 {summary.pendingTasks} 项待校对、{summary.windows} 个窗口、{summary.analysis.running + summary.analysis.queued} 项排队或运行中的分析。</p><p>{summary.unsavedWindows ? `${summary.unsavedWindows} 个窗口最近报告有未保存输入。建议先在各窗口保存，或取消退出。` : '意见与已确认恢复副本保留；未完成分析会标为中断。'}</p><p>不会关闭浏览器或删除资料。真正退出后，可使用已配置的页面启动入口，或从桌面／启动文件重开；退出不会自动重启。</p></>, okText: summary.unsavedWindows ? '保留已确认副本并退出全局' : '退出整个校对室', cancelText: '取消退出', okButtonProps: { danger: true }, onOk: async () => {
         await preserveCurrent(); const result = await closeService(service.runtimeId, summary.unsavedWindows > 0);
         if (!result.closing) throw new Error('退出请求未确认'); message.info('已请求退出校对室；各窗口输入仍在，请不要把退出当作已保存。');
       } });
@@ -383,7 +448,7 @@ export function ReviewDesk() {
   }
   function perform(action: Action, discarded = false) {
     setFeedback(''); setReferenceOpen(false); setLoop(false); auditionEnd.current = null;
-    if (action.type === 'file') { void openFile(action.file, action.task, true, action.newTask); return; }
+    if (action.type === 'file') { void openFile(action.file, action.task, true, action.newTask, action.readOnly); return; }
     if (action.type === 'task') { void openTask(action.task, action.readOnly); return; }
     if (action.type === 'suspend') { void releaseMedia().then(() => message.info('已挂起并释放媒体；任务仍在等待，手选素材下次需要重选。')).catch(cause => setFeedback(cause.message)); return; }
     if (action.type === 'end') { void finishTask(discarded); return; }
@@ -559,6 +624,7 @@ export function ReviewDesk() {
         const value = await heartbeat(current.activeTask?.id ?? null, current.unsaved);
         if (stopped || number !== generation.current) return;
         setPrimary(value.primary);
+        if (!value.primary && !current.activeTask && !current.media && !requestedTask.current) initialPick.current = true;
         if (current.activeTask && value.taskStatus && value.taskStatus !== 'waiting') {
           setActiveTask(task => task ? { ...task, status: value.taskStatus! } : null); setEditing(false); setReviewContext(current.activeTask.id, null);
           setRecoveryStatus('这项任务已结束等待，本页输入仍保留；请在任务列表明确重开后再编辑。'); return;
@@ -582,12 +648,17 @@ export function ReviewDesk() {
     window.addEventListener('pagehide', release); return () => window.removeEventListener('pagehide', release);
   }, []);
   useEffect(() => {
-    if (initialPick.current || !primary || !tasks.data || media || activeTask || busy || service.state !== 'online') return;
+    if (initialPick.current || !requestedTask.current && !primary || !tasks.data || media || activeTask || busy || service.state !== 'online') return;
     initialPick.current = true;
-    const requested = new URLSearchParams(location.search).get('task');
+    const requested = requestedTask.current;
     if (requested) void getTask(requested).then(({ task }) => { if (!activity.current.media && !activity.current.busy) void openTask(task); }).catch(cause => setRecoveryStatus(cause.message));
     else { const task = tasks.data.items.find(item => !item.manual && item.status === 'waiting'); if (task) void openTask(task); }
   }, [primary, tasks.data, service.state]);
+  useEffect(() => {
+    if (!activeTask || !media) return;
+    const url = new URL(location.href); url.searchParams.set('task', activeTask.id);
+    window.history.replaceState(window.history.state, '', url);
+  }, [activeTask?.id, media?.url]);
   async function takeEditing() {
     if (!activeTask) return;
     Modal.confirm({ title: '明确接管这个任务的编辑？', content: '另一窗口会失去编辑权，但其输入仍保留。本页保存仍须核对正式意见版本，接管不会跳过冲突检查。', okText: '接管编辑', cancelText: '保持只读', onOk: async () => {
@@ -665,7 +736,7 @@ export function ReviewDesk() {
       <Form.Item label="问题类别（可选）"><Select aria-label="问题类别" allowClear value={draft.topic ?? undefined} placeholder="画面、字幕、声音、节奏…" options={Object.entries(TOPIC_LABEL).filter(([key]) => !media?.isAudio || key !== 'visual').map(([value, label]) => ({ value, label }))} onChange={value => patch({ topic: (value ?? null) as ReviewTopic | null })} /></Form.Item></details>
       <Form.Item label="你的意见" htmlFor="opinion-text"><Input.TextArea id="opinion-text" aria-label="你的意见" value={draft.text} maxLength={2000} autoSize={{ minRows: 3, maxRows: 7 }} placeholder="这段画面、声音、字幕或节奏，希望怎么改？" onChange={event => patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} /></Form.Item>
       <Button className="save-note" block type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online' || !!problem}>{view.kind === 'edit' ? '保存这条修改' : '保存这条意见'}</Button>
-      <p className="note-safe" role="status">{service.state !== 'online' ? '连接不可用，当前无法保存。输入仍在本页，请按上方提示重新打开校对室。' : problem || '可保存；写入并回读确认后，进入空白新意见。'}</p>
+      <p className="note-safe" role="status">{service.state !== 'online' ? '连接不可用，当前无法保存。输入仍在本页，请按上方提示重新打开校对室。' : !editing ? '本窗口只读；明确取得编辑权后才能保存，当前输入仍保留。' : problem || '可保存；写入并回读确认后，进入空白新意见。'}</p>
       {view.kind === 'edit' && <Button type="link" disabled={locked || service.state !== 'online'} onClick={() => selected && request({ type: 'detail', note: selected })}>取消编辑，查看原意见</Button>}
     </Form>}
     {draft.rect && <details className="coordinate-details"><summary>画面坐标 · 相对实际画幅</summary><div className="coordinate-fields">{(['x', 'y', 'width', 'height'] as const).map((key, index) => <label key={key}>{['横向', '纵向', '宽', '高'][index]}<Input aria-label={`画面${key}`} value={(draft.rect![key] * 100).toFixed(1)} suffix="%" readOnly={reading || locked} onChange={event => {
@@ -679,14 +750,15 @@ export function ReviewDesk() {
   const pendingProblem = pendingDrafts.filter(hasDraftWork).map(value => draftProblem(value, durationMs, !!selecting || capturing)).find(Boolean) ?? '';
   const taskPanel = <ReviewTasks data={tasks.data} error={tasks.error} currentId={activeTask?.id ?? null} page={tasks.page} includeClosed={tasks.closed} online={service.state === 'online'} onPage={tasks.setPage} onClosed={tasks.setClosed} onRefresh={() => void tasks.refresh()} onOpen={task => request({ type: 'task', task })} onSelectFile={task => chooseFile(undefined, task)} onNew={() => chooseFile(undefined, null, true)} onStatus={(task, status) => void taskStatus(task, status)} />;
   const otherTasks = Math.max(0, (tasks.data?.active ?? 0) - (activeTask?.status === 'waiting' ? 1 : 0));
-  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="lifecycle-20261011-r2">
+  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="task-player-20261011-r1">
     <header className="brandbar"><div className="brand"><img src="/brand/review-mark.svg" alt="Media Review" /><strong>Media Review</strong><span className="tool-name">音视频校对</span></div>
-      <div className="brand-actions"><ServiceBadge state={service.state} /><Badge count={tasks.data?.active ?? 0} color="#a76543"><Button onClick={() => setTasksOpen(true)}>校对任务</Button></Badge><Dropdown trigger={['click']} menu={{ items: [...(media ? [{ key: 'suspend', label: '挂起当前任务 · 释放媒体' }, { key: 'end', label: '结束当前任务 · 保留历史' }, { type: 'divider' as const }] : []), { key: 'exit', label: '退出整个校对室', danger: true }], onClick: ({ key }) => { if (key === 'suspend') request({ type: 'suspend' }); else if (key === 'end') request({ type: 'end' }); else request({ type: 'exit' }); } }}><Button disabled={busy === 'saving'}>任务操作</Button></Dropdown><span className="privacy"><SafetyCertificateOutlined />素材留在本机</span>{media && <><span className="save-indicator" role="status">{stateLabel}</span><Button icon={screen === 'home' ? <ArrowLeftOutlined /> : <HomeOutlined />} disabled={busy === 'saving'} onClick={() => navigate(screen === 'home' ? 'review' : 'home')}>{screen === 'home' ? '返回当前素材' : '回到主页'}</Button></>}<Button icon={<FolderOpenOutlined />} disabled={busy === 'saving'} onClick={() => chooseFile()}>打开其他素材</Button>{media && <Button className="save-button" icon={<SaveOutlined />} disabled={locked || service.state !== 'online'} loading={busy === 'saving'} onClick={() => void save()}>保存进度</Button>}{media && <Button type="primary" icon={<CommentOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online'} onClick={() => void save(true)}>保存并交给 Agent</Button>}</div>
-      <input ref={fileInput} type="file" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) { const task = chosenManualTask.current, newTask = chosenNewTask.current; chosenManualTask.current = null; chosenNewTask.current = false; request({ type: 'file', file, newTask, ...(task ? { task } : {}) }); } }} />
+      <div className="brand-actions"><span className="service-status-actions"><ServiceBadge state={service.state} />{service.state !== 'online' && service.state !== 'connecting' && <ServiceRecoveryButton compact state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />}</span><Badge count={tasks.data?.active ?? 0} color="#a76543"><Button onClick={() => setTasksOpen(true)}>校对任务</Button></Badge><Dropdown trigger={['click']} menu={{ items: [...(media ? [{ key: 'suspend', label: '挂起当前任务 · 释放媒体' }, { key: 'end', label: '结束当前任务 · 保留历史' }, { type: 'divider' as const }] : []), { key: 'restart', label: '重启校对服务', disabled: service.state !== 'online' || !!recoveryWait || !!busy }, { key: 'exit', label: '退出整个校对室', danger: true }], onClick: ({ key }) => { if (key === 'suspend') request({ type: 'suspend' }); else if (key === 'end') request({ type: 'end' }); else if (key === 'restart') void requestRestart(); else request({ type: 'exit' }); } }}><Button disabled={busy === 'saving'}>任务操作</Button></Dropdown><span className="privacy"><SafetyCertificateOutlined />素材留在本机</span>{media && <><span className="save-indicator" role="status">{stateLabel}</span><Button icon={screen === 'home' ? <ArrowLeftOutlined /> : <HomeOutlined />} disabled={busy === 'saving'} onClick={() => navigate(screen === 'home' ? 'review' : 'home')}>{screen === 'home' ? '返回当前素材' : '回到主页'}</Button></>}<Button icon={<FolderOpenOutlined />} disabled={busy === 'saving'} onClick={() => chooseFile()}>打开其他素材</Button>{media && <Button className="save-button" icon={<SaveOutlined />} disabled={locked || service.state !== 'online'} loading={busy === 'saving'} onClick={() => void save()}>保存进度</Button>}{media && <Button type="primary" icon={<CommentOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online'} onClick={() => void save(true)}>保存并交给 Agent</Button>}</div>
+      <input ref={fileInput} type="file" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) { const task = chosenManualTask.current, newTask = chosenNewTask.current, readOnly = chosenReadOnly.current; chosenManualTask.current = null; chosenNewTask.current = false; chosenReadOnly.current = false; request({ type: 'file', file, newTask, readOnly, ...(task ? { task } : {}) }); } }} />
     </header>
-    <ServiceNotice state={service.state} />
+    <ServiceNotice state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />
+    {launchFeedback && <Alert className="service-notice" type="warning" showIcon title="尚未确认恢复连接" description={launchFeedback} closable onClose={() => setLaunchFeedback('')} />}
     {otherTasks > 0 && media && <Alert className="service-notice" type="info" showIcon title={`另有 ${otherTasks} 项任务等待校对`} description="新片只进入任务列表，不会切走当前正在看的片或合并意见。" action={<Button onClick={() => setTasksOpen(true)}>查看任务</Button>} />}
-    {!primary && !media && tasks.data && tasks.data.active > 0 && <Alert className="service-notice" type="info" showIcon title="已有校对室主窗口，本页不自动重复加载视频" description="任务已经登记。需要手动对照时，从任务列表选择；同一任务须明确接管才可编辑。" />}
+    {!primary && !media && !requestedTask.current && tasks.data && tasks.data.active > 0 && <Alert className="service-notice" type="info" showIcon title="已有校对室主窗口，本页不自动重复加载视频" description="任务已经登记。需要手动对照时，从任务列表选择；同一任务须明确接管才可编辑。" />}
     {media && activeTask && <div className="task-context" data-active-task={activeTask.id}><Tag color={editing ? 'processing' : 'warning'}>{editing ? '本窗口可编辑' : '只读 · 不重复分析'}</Tag><strong>{activeTask.title}</strong><span>{activeTask.label || (activeTask.manual ? '手选任务' : 'Agent 送片')} · {activeTask.id.slice(0, 8)}</span>{!editing && <Button size="small" onClick={() => void takeEditing()}>明确接管编辑</Button>}{activeTask.legacy && <small>沿用旧版资料；旧记录只有抽样身份，请核对是否同一版本。</small>}</div>}
     {screen === 'home' && !media && recoveryStatus && <Alert className="service-notice" type="warning" showIcon title={recoveryStatus} />}
     {screen === 'home' && <ReviewHome hasMedia={!!media} online={service.state === 'online'} onOpen={chooseFile} onResume={() => navigate('review')} tasks={taskPanel} />}
@@ -695,7 +767,7 @@ export function ReviewDesk() {
       <div className="project-row"><div className="project-name"><span className="media-kind">{media.isAudio ? <AudioOutlined /> : <VideoCameraOutlined />}</span><div><h1 title={media.file.name}>{media.file.name}</h1><small>{media.isAudio ? '本机录音' : `${media.width} × ${media.height} · 完整画面`} · {formatTime(durationMs, false)} · 时间从0开始</small></div></div><div className="step-line"><span><b>01</b>打开素材</span><span className="on"><b>02</b>找到位置</span><span><b>03</b>写意见并交接</span></div></div>
       {recordError && <Alert type="error" showIcon title={activeTask ? '已有意见未能读取，原记录保留' : '任务尚未登记，本页文件保留'} description={recordError} action={<Button onClick={() => setLoadAttempt(value => value + 1)}>重试读取</Button>} />}
       <div className="workspace"><section className="review-main" aria-label="媒体审阅区">
-        <section className="surface"><div className="surface-tools"><span className="surface-label">新建标注</span><div className="surface-actions"><Button disabled={locked || service.state !== 'online'} icon={<ClockCircleOutlined />} onClick={() => requestTarget('point')}>标记时间点</Button><Button disabled={locked || service.state !== 'online'} icon={<ScissorOutlined />} onClick={() => requestTarget('range')}>选择时间段</Button>{!media.isAudio && <Button disabled={locked || service.state !== 'online'} icon={<SelectOutlined />} onClick={() => requestTarget('frame')}>框选当前画面</Button>}{selecting && <Button disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消选取</Button>}</div></div>
+        <section ref={videoSurface} className={`surface${presentation.expanded ? ' is-expanded' : ''}`} data-lenis-prevent={presentation.expanded || presentation.fullscreen ? '' : undefined} aria-label={presentation.expanded || presentation.fullscreen ? '放大的视频播放器' : '播放器'}><div className="surface-tools"><span className="surface-label" title={media.file.name}>{presentation.expanded || presentation.fullscreen ? media.file.name : '新建标注'}</span><div className="surface-actions"><Button disabled={locked || service.state !== 'online'} icon={<ClockCircleOutlined />} onClick={() => requestTarget('point')}>标记时间点</Button><Button disabled={locked || service.state !== 'online'} icon={<ScissorOutlined />} onClick={() => requestTarget('range')}>选择时间段</Button>{!media.isAudio && <Button disabled={locked || service.state !== 'online'} icon={<SelectOutlined />} onClick={() => requestTarget('frame')}>框选当前画面</Button>}{selecting && <Button disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消选取</Button>}</div></div>
           <div ref={stage} className={`viewer ${listenOnly ? 'audio-mode' : ''} ${media.width / media.height > 1 ? 'landscape' : ''}`}>
             {media.isAudio ? <audio ref={player as React.RefObject<HTMLAudioElement>} data-primary-media src={media.url} preload="metadata" onLoadedMetadata={metadata} onDurationChange={metadata} onTimeUpdate={onTimeUpdate} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setMediaError('浏览器无法播放此音频，请检查编码或换用可播放文件。'); setBusy(null); analysis.stop(); }} /> : <div className="video-holder" style={{ width: frameSize.width, height: frameSize.height, visibility: listenOnly ? 'hidden' : undefined }}>
               <video ref={player as React.RefObject<HTMLVideoElement>} data-primary-media src={media.url} playsInline preload="metadata" aria-label="当前原始视频" onLoadedMetadata={metadata} onDurationChange={metadata} onTimeUpdate={onTimeUpdate} onPlay={() => { setPlaying(true); setSelecting(null); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setMediaError('浏览器无法播放此视频，请检查编码或换用MP4。'); setBusy(null); analysis.stop(); }} />
@@ -706,7 +778,7 @@ export function ReviewDesk() {
             {listenOnly ? <div className="audio-face"><div className="audio-title"><AudioOutlined />听原声，按位置留下意见</div><div className="audio-large-clock">{formatTime(currentMs, false)}<small>.{String(currentMs % 1000).padStart(3, '0')}</small></div><p className="audio-caption">{activeCue?.text ?? '点击右侧一句台词，或在下方时间轴上找到位置。'}</p><div className="audio-mini"><InfoCircleOutlined />播放位置只描述正在听哪里，不会改变意见目标。</div></div> : <><div className="viewer-side"><span>正在看的位置</span><strong>{formatTime(currentMs)}</strong><span>框选会暂停在此刻</span></div><div className="viewer-hint"><InfoCircleOutlined />继续播放时旧框会隐藏，参考画面仍留在意见旁。</div></>}
             {mediaError && <div className="media-error" role="alert">{mediaError}</div>}
           </div>
-          <div className="transport"><Button className="transport-play" aria-label={playing ? '暂停' : '播放'} icon={playing ? <PauseOutlined /> : <PlayCircleOutlined />} disabled={!durationMs || capturing} onClick={() => void togglePlay()} /><strong className="clock">{formatTime(currentMs)}</strong><small>/ {formatTime(durationMs, false)}</small><Slider className="media-seek" ariaLabelForHandle="播放位置" min={0} max={Math.max(1, durationMs)} step={10} value={currentMs} onChange={seek} tooltip={{ formatter: value => formatTime(value ?? 0) }} disabled={!durationMs || capturing} /><Select className="speed-select" size="small" aria-label="播放速度" value={rate} options={[.5, .75, 1, 1.25, 1.5, 2].map(value => ({ value, label: `${value}×` }))} onChange={value => { setRate(value); if (player.current) player.current.playbackRate = value; }} /></div>
+          <div className="transport"><Button className="transport-play" aria-label={playing ? '暂停' : '播放'} icon={playing ? <PauseOutlined /> : <PlayCircleOutlined />} disabled={!durationMs || capturing} onClick={() => void togglePlay()} /><strong className="clock">{formatTime(currentMs)}</strong><small>/ {formatTime(durationMs, false)}</small><Slider className="media-seek" ariaLabelForHandle="播放位置" min={0} max={Math.max(1, durationMs)} step={10} value={currentMs} onChange={seek} tooltip={{ formatter: value => formatTime(value ?? 0) }} disabled={!durationMs || capturing} /><Select className="speed-select" size="small" aria-label="播放速度" getPopupContainer={node => node.parentElement!} value={rate} options={[.5, .75, 1, 1.25, 1.5, 2].map(value => ({ value, label: `${value}×` }))} onChange={value => { setRate(value); if (player.current) player.current.playbackRate = value; }} />{!media.isAudio && !listenOnly && <div className="video-view-actions"><Button data-player-resize aria-label={presentation.expanded || presentation.fullscreen ? '收起视频画面' : '放大视频画面'} aria-pressed={presentation.expanded} icon={presentation.expanded || presentation.fullscreen ? <ShrinkOutlined aria-hidden /> : <ExpandAltOutlined aria-hidden />} disabled={presentation.pending} onClick={presentation.toggleExpanded}>{presentation.expanded || presentation.fullscreen ? '收起' : '放大'}</Button><Button aria-label={presentation.fullscreen ? '退出视频全屏' : '视频全屏'} aria-pressed={presentation.fullscreen} icon={presentation.fullscreen ? <FullscreenExitOutlined aria-hidden /> : <FullscreenOutlined aria-hidden />} loading={presentation.pending} onClick={() => void presentation.toggleFullscreen()}>{presentation.fullscreen ? '退出全屏' : '全屏'}</Button></div>}</div>
         </section>
         <section className="sound-panel" aria-label="时间定位与选段"><div className="sound-head"><div className="sound-title"><AudioOutlined /><strong>波形与时间轴</strong><small>画面、声音共用时间范围</small></div><div className="sound-actions"><Button icon={<ScissorOutlined />} disabled={locked || service.state !== 'online'} onClick={() => requestTarget('range')}>选择时间段</Button><label className="contrast"><Switch size="small" checked={contrast} onChange={setContrast} aria-label="增强强弱对比" />强弱增强</label></div></div>
           <div className="timeline-tools"><Button size="small" aria-label="时间轴向前" disabled={zoom === 1} onClick={() => setViewStart(Math.max(0, viewStart - span * .7))}>←</Button><Button size="small" aria-label="时间轴向后" disabled={zoom === 1} onClick={() => setViewStart(Math.min(durationMs - span, viewStart + span * .7))}>→</Button><Button size="small" aria-label="缩小时间轴" disabled={zoom === 1} onClick={() => changeZoom(zoom / 1.5)}>−</Button><Button size="small" aria-label="放大时间轴" disabled={zoom === 16} onClick={() => changeZoom(zoom * 1.5)}>＋</Button><Button size="small" disabled={zoom === 1} onClick={() => changeZoom(1)}>全览</Button><span>{zoom.toFixed(1)}×</span>{selecting === 'range' && <Button size="small" onClick={cancelSelection}>取消选段</Button>}</div>
@@ -753,6 +825,7 @@ export function ReviewDesk() {
       <Input.TextArea aria-label="返修资料包目录" value={exportPath} readOnly autoSize={{ minRows: 2, maxRows: 5 }} onClick={event => event.currentTarget.select()} />
       <p>复制目录到文件资源管理器即可找到；交给其他Agent或人工时，一并提供正确的源媒体。</p>
     </Modal>
+    <AnalysisActivityNotice layoutKey={`${screen}:${activeTask?.id ?? ''}`} items={tasks.data?.activity?.items ?? []} locating={analysisLocator.locating} online={service.state === 'online' && !tasks.error && tasks.data?.activity?.runtimeId === service.runtimeId} onLocate={item => void analysisLocator.locate(item)} />
     <ReviewHandoffDialog handoff={handoff} open={handoffOpen} copied={copied} copying={copying} copyError={copyError} onCopy={() => void copyHandoff()} onClose={() => setHandoffOpen(false)} onHome={() => { setHandoffOpen(false); navigate('home'); }} />
     <Modal open={!!pending} title={pending?.type === 'finish' ? '还有未完成的意见' : ['file', 'task'].includes(pending?.type ?? '') ? '先保存当前审阅，再打开其他素材' : '先处理当前未保存的意见'} closable={!busy} maskClosable={false} onCancel={() => { if (!busy) setPending(null); }} footer={<div className="switch-actions"><Button disabled={!!busy} onClick={() => { setPending(null); focusOpinion(); }}>{pending?.type === 'finish' ? '继续完成意见' : '取消，继续编辑'}</Button><Button danger disabled={!!busy} onClick={() => void resolvePending(false)}>{pending?.type === 'finish' ? '放弃未完成草稿，保存其余意见' : ['file', 'task'].includes(pending?.type ?? '') ? '放弃未保存内容并换片' : '放弃当前并继续'}</Button>{pending?.type !== 'finish' && <Button type="primary" loading={busy === 'saving'} disabled={!!busy || capturing || service.state !== 'online' || !editing || !!pendingProblem} onClick={() => void resolvePending(true)}>保存当前并继续</Button>}</div>}>
       <p>取消会保留文字、时间和画面位置；写入及回读确认前不会清空草稿。</p><p>{pendingProblem || '可以先保存当前全部意见，也可以明确放弃本页未保存的内容。'}</p>{feedback && <Alert type="error" showIcon title={feedback} />}

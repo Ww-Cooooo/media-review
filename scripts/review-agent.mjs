@@ -23,7 +23,7 @@ export async function runAgentCLI(args = process.argv.slice(2), root = ROOT) {
     output({ contract: 'media-review-agent/v2', commands: {
       'after-export': '--media <绝对路径> [--request-id <UUID>] [--label <来源>] [--no-browser]：登记独立任务并排队自检；快速返回，不表示已检查完成',
       'self-check': '同after-export，但默认不打开网页',
-      'open': '[--media <绝对路径>] [--no-browser]：启动／复用服务；显式桌面打开不等于建任务',
+      'open': '[--task <已有taskId> | --media <绝对路径>] [--no-browser]：打开指定已有任务不新建；不指定任务时只打开共用校对室',
       'status': '--task <taskId> [--job <jobId>] [--result]：查实际任务与证据状态；完成后才读取结果',
       'tasks': '列出待校对任务，不读取意见正文',
       'cancel': '--task <taskId> --job <jobId>：只撤回本任务对分析的需求；其他共享调用者不受影响',
@@ -37,7 +37,7 @@ export async function runAgentCLI(args = process.argv.slice(2), root = ROOT) {
   }
   if (command === 'after-export' || command === 'self-check' || command === 'open') {
     if (command !== 'open' && !media) throw new Error('需要--media明确指定已经导出完毕的成片');
-    const result = await openReview({ rootDir: root, media, browser: command !== 'self-check' && !args.includes('--no-browser'), forceBrowser: command === 'open', requestId: option('--request-id') ?? taskId, title: option('--title'), label: option('--label'), inspect: command !== 'open' });
+    const result = await openReview({ rootDir: root, media, taskId: command === 'open' ? taskId : null, browser: command !== 'self-check' && !args.includes('--no-browser'), forceBrowser: command === 'open', requestId: option('--request-id') ?? taskId, title: option('--title'), label: option('--label'), inspect: command !== 'open' });
     output(result); if (result.inspection?.state === 'not-queued') process.exitCode = 2;
     return;
   }
