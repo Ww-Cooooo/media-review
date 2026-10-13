@@ -27,7 +27,7 @@ node scripts/review-agent.mjs open --no-browser
 - `server/`：原生 Node 本机服务、认证、记录／参考图、恢复、工具分析、历史与导出。
 - `scripts/review-agent.mjs`：源码环境下的主动带入、自检与返修导出入口。
 - `skill/`：Skill 说明、安装脚本与启动文件模板，不是可直接安装的完整运行包。
-- `public/`：通用图标、MiSans 原字体与第三方许可。
+- `public/`：网页标识、桌面IP图标、MiSans 原字体与资产／第三方许可说明。
 - `dist/`：前端构建产物，不提交。
 - `release/`：完整 Skill 输出目录，不提交；经验证的 ZIP 才作为 Release 附件。
 
@@ -50,10 +50,10 @@ npm test
 在仓库根目录执行；构建器会将自有源码许可及第三方声明一起带入完整包：
 
 ```sh
-npm run build:skill -- --out release/media-review-0.3.0-beta.3
+npm run build:skill -- --out release/media-review-0.3.0-beta.4
 ```
 
-输出应包含 SKILL.md、README、LICENSE、`skill-package.json`、Windows 启动／安装文件、`scripts/` 和自包含的 `app/`。包内 `app/` 带构建资源与原生 Node 服务，终端用户不需要 npm 或 node_modules，但仍须安装 Node.js 24+、PowerShell 7+ 及浏览器。
+输出应包含 SKILL.md、README、LICENSE、`skill-package.json`、Windows 启动／安装文件、`scripts/` 和自包含的 `app/`。桌面图标位于`app/dist/brand/media-review-launcher.ico`，多尺寸ICO及品牌说明均登记在清单内；安装和`-InitializeOnly`均为快捷方式设置本安装目录的IconLocation，不引用构建或临时测试目录。包内 `app/` 带构建资源与原生 Node 服务，终端用户不需要 npm 或 node_modules，但仍须安装 Node.js 24+、PowerShell 7+ 及浏览器。
 
 构建器逐项登记文件与 SHA-256；它不证明美感或语义正确，也不执行安装、上传、发布或覆盖旧输出目录。工具／模型、本机绑定、媒体、用户意见、恢复缓存和实例身份不进入安装包。
 
@@ -71,7 +71,7 @@ npm run build:skill -- --out release/media-review-0.3.0-beta.3
 
 ## 共享服务、容量与保留
 
-以下共享机制自0.3.0-beta.2引入，beta.3沿用；旧beta.1包不会自动更新。数据根级启动门闩覆盖检查／spawn／登记，运行门闩由服务整个生命周期持有；Windows使用命名管道，退出由OS释放，不凭PID或陈旧时间抢锁。跨兼容安装副本复用已选定runtimeRoot，核对rootId、dataId、runtimeId、协议和UI版本；不兼容版本明确拒绝。
+这些共享机制自0.3.0-beta.2引入，beta.3／beta.4沿用；旧beta.1包不会自动更新。数据根级启动门闩覆盖检查／spawn／登记，运行门闩由服务整个生命周期持有；Windows使用命名管道，退出由OS释放，不凭PID或陈旧时间抢锁。跨兼容安装副本复用已选定runtimeRoot，核对rootId、dataId、runtimeId、协议和UI版本；不兼容版本明确拒绝。
 
 新任务以UUID落盘，requestId幂等重试。正式意见按任务隔离；同任务保存按加载版本串行比较，覆盖前保留versions。编辑租约使用单调时钟，仅提供交互归属，不能代替提交版本校验。客户端恢复按taskId／clientId捕获上下文，不让晚到的旧任务请求改写新任务。旧资料的共享历史不凭多个inbox登记自动拆分。
 

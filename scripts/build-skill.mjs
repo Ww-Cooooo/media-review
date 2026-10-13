@@ -40,11 +40,11 @@ for (const name of ['index.html', 'assets']) await copy(path.join(bundle, name),
 await fs.mkdir(path.join(app, 'dist/fonts'));
 await fs.mkdir(path.join(app, 'dist/brand'));
 for (const weight of ['Regular', 'Medium', 'Semibold']) await copy(path.join(root, 'public/fonts', `MiSans-${weight}.woff2`), path.join(app, 'dist/fonts', `MiSans-${weight}.woff2`));
-await copy(path.join(root, 'public/brand/review-mark.svg'), path.join(app, 'dist/brand/review-mark.svg'));
+for (const name of ['review-mark.svg', 'media-review-launcher.ico']) await copy(path.join(root, 'public/brand', name), path.join(app, 'dist/brand', name));
 await copy(path.join(root, 'public/licenses'), path.join(app, 'dist/licenses'));
 const modules = path.dirname(path.dirname(require.resolve('react/package.json')));
 const lock = JSON.parse(await fs.readFile(path.join(root, 'package-lock.json'), 'utf8'));
-const notices = ['第三方依赖许可与声明', '以下保留构建所用依赖的原声明；字体与GSAP许可另见app/dist/licenses。', ''];
+const notices = ['第三方依赖许可与声明', '以下保留构建所用依赖的原声明；字体、GSAP许可及品牌图标说明另见app/dist/licenses。', ''];
 for (const [relative, dependency] of Object.entries(lock.packages)) {
   if (!relative.startsWith('node_modules/') || dependency.dev) continue;
   const directory = path.join(modules, relative.slice('node_modules/'.length));

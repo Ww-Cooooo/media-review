@@ -1,6 +1,6 @@
 # Windows 安装与首次校对
 
-本说明对应 **0.3.0-beta.3 Windows预发布完整包**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.3)下载完整ZIP及校验文件。本版提供页面重启／本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏；旧安装不会自动升级。源码仓库中的`skill/`只是模板；完整包同时包含`skill-package.json`、`app/`、`scripts/`、SKILL.md、README和安装入口。
+本说明对应 **0.3.0-beta.4 Windows预发布完整包**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.4)下载完整ZIP及校验文件。本版的安装／初始化入口会为桌面快捷方式配置随包的小电视IP图标，同时保留beta.3的页面重启／本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏；旧安装不会自动升级。源码仓库中的`skill/`只是模板；完整包同时包含`skill-package.json`、`app/`、`scripts/`、SKILL.md、README和安装入口。
 
 ## 准备运行环境
 
@@ -20,7 +20,7 @@ pwsh --version
 ## 安装
 
 1. 将完整 ZIP 解压到普通本机目录，不要只取出 SKILL.md。
-2. 双击“安装 Media Review.cmd”。默认安装到当前用户的 `.claude/skills/media-review`，创建“Media Review”桌面快捷方式，并注册按资料根隔离的当前用户页面启动协议，说明为“启动 Media Review 本机音视频校对室”。
+2. 双击“安装 Media Review.cmd”。默认安装到当前用户的 `.claude/skills/media-review`，创建使用随包小电视IP图标的“Media Review”桌面快捷方式，并注册按资料根隔离的当前用户页面启动协议，说明为“启动 Media Review 本机音视频校对室”。
 3. 等待安装器明确报告 Skill 和桌面入口就绪，再双击图标打开。无需管理员权限，不设置开机启动、不改其他 Skill。
 
 如果目标已有不同版本或本机修改，安装器会保留原内容并停止，不自动覆盖升级。先备份并选择新位置，不要删除旧数据来绕过提示。
@@ -81,7 +81,7 @@ Agent登记的原文件可重新带入。手选文件要从对应任务重新选
 
 默认私有数据在用户主目录的`.media-review-desk/data`，与程序分开。新任务在`tasks/<taskId>/reviews`下分别保存，旧`reviews`与`inbox`保留；恢复旧资料不等于自动拆分过去混用的意见。迁移要备份整个数据根和原媒体，不能仅复制程序。
 
-## 从beta.1／beta.2升级
+## 从beta.1／beta.2／beta.3升级
 
 1. 先在旧窗口正式保存并回读，备份私有数据根和原媒体。不要把浏览器中未回传的输入当作已备份。
 2. 将新包安装到明确的新位置，不覆盖旧安装；让宿主使用选定的新Skill完整路径。已存在不同快捷方式目标时，安装器保留旧图标，可能创建带后缀的新入口，以回执为准。

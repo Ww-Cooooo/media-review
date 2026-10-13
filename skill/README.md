@@ -2,13 +2,13 @@
 
 Agent出片后主动送到本机音视频校对室并排队自检；你回来后从任务列表接手，按时间或画面位置留下意见，再交回Agent返修。校对室本身不改写原片，也能审阅其他软件制作的成片。
 
-这是 **0.3.0-beta.3 Windows预发布完整包**，提供页面重启与Windows本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏。[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.3)提供完整ZIP和校验文件；旧版安装不会自动更新，升级请先保存、备份并核对新入口。
+这是 **0.3.0-beta.4 Windows预发布完整包**，桌面启动入口采用透明底小电视IP图标；页面重启与Windows本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏沿用beta.3。[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.4)提供完整ZIP和校验文件；旧版安装不会自动更新，升级请先保存、备份并核对新入口。
 
 ## Windows 安装
 
 需要 Node.js 24+、PowerShell 7+（`pwsh`，不是 Windows PowerShell 5.1）以及支持素材编码的浏览器。
 
-拿到本版的完整 ZIP 后，解压并双击[安装 Media Review.cmd](安装%20Media%20Review.cmd)。安装器默认将完整包安装到当前用户的 `.claude/skills/media-review`，创建“Media Review”桌面入口，并注册当前用户、按资料根隔离的页面启动协议。入口说明明确为“启动 Media Review 本机音视频校对室”，实际启动本机Node.js服务；不需要管理员权限，不自动下载软件、注册开机启动或修改其他 Skill。已有不同版本或本机修改会保留并停止，不静默覆盖。
+拿到本版的完整 ZIP 后，解压并双击[安装 Media Review.cmd](安装%20Media%20Review.cmd)。安装器默认将完整包安装到当前用户的 `.claude/skills/media-review`，创建采用随包小电视IP图标的“Media Review”桌面入口，并注册当前用户、按资料根隔离的页面启动协议。入口说明明确为“启动 Media Review 本机音视频校对室”，实际启动本机Node.js服务；不需要管理员权限，不自动下载软件、注册开机启动或修改其他 Skill。已有不同版本或本机修改会保留并停止，不静默覆盖。
 
 如果你是在源码仓库的 `skill/` 下看到本文件，这里只是打包模板，缺少运行程序和清单，不能直接当成完整安装包。
 
@@ -72,4 +72,4 @@ pwsh -NoProfile -File .\scripts\page-launcher.ps1 -Action Unregister -AppRoot "<
 
 先在旧页保存并备份整个`.media-review-desk/data`及原媒体，再安装到新的完整目录。不兼容旧服务仍运行时，新入口会拒绝，不自动关闭它。beta.2可从旧页“任务操作 → 退出整个校对室”明确退出；beta.1没有界面退出按钮：从新包目录先执行`node scripts/review.mjs quit-legacy --legacy-root "<旧包app目录的绝对路径>"`核对，确认旧窗口已保存且要退出后才追加`--confirm`。只处理session登记的已知旧服务，不扫描／结束未知PID，也不保证未登记重复服务或独立CLI都已退出；无法核实则用新的绝对路径`MEDIA_REVIEW_DATA_DIR`隔离试用，不能混跑默认数据根。让宿主显式使用选定的新Skill路径，桌面图标以安装器回执为准，不能假称已替换旧安装。
 
-不要分享私有数据目录、工具绑定、媒体或意见。自有源码授权与第三方声明分别以完整包随附的 LICENSE、THIRD_PARTY_NOTICES.txt 和字体／GSAP 原许可为准，不将第三方重新标成 MIT 或将 MiSans 称为 OFL。
+不要分享私有数据目录、工具绑定、媒体或意见。自有源码授权与第三方声明分别以完整包随附的 LICENSE、THIRD_PARTY_NOTICES.txt 和字体／GSAP 原许可为准，不将第三方重新标成 MIT 或将 MiSans 称为 OFL。桌面IP图标另附[品牌图标说明](https://github.com/Ww-Cooooo/media-review/blob/v0.3.0-beta.4/public/licenses/MEDIA-REVIEW-BRAND-NOTICE.txt)，代码许可不构成对IP母源或品牌标识的独立再授权。

@@ -1,0 +1,7 @@
+Media Review 桌面启动图标说明
+
+适用文件：public/brand/media-review-launcher.ico；完整包中为app/dist/brand/media-review-launcher.ico。
+
+该图标采用维护者提供的IP形象，作为Media Review桌面启动标识随本项目源码与安装包分发。原始品牌母源、设计工程及其他未选素材不包含在分发物中。
+
+本项目的MIT许可适用于自有源码，不构成对该IP母源、名称或品牌标识的独立再授权。需要脱离本项目独立使用或另行分发该形象时，请先取得相关权利人的许可。

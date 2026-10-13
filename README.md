@@ -8,15 +8,15 @@ Media Review 是一个本机音视频校对室，也是一套供 Agent 使用的
 
 ## 开始使用
 
-当前版本为 **0.3.0-beta.3 Windows 预发布版**，完整安装包见 [v0.3.0-beta.3 发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.3)。本版新增页面重启与Windows本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏；旧版安装不会自动更新。本项目仍处于测试阶段，不是稳定版承诺。
+当前版本为 **0.3.0-beta.4 Windows 预发布版**，完整安装包见 [v0.3.0-beta.4 发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.4)。本版将桌面启动入口换为透明底小电视IP图标，安装和初始化入口时自动配置；页面重启与Windows本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏沿用beta.3。旧版安装不会自动更新，本项目仍处于测试阶段，不是稳定版承诺。
 
 ### 下载安装（Windows）
 
 准备 **Node.js 24+、PowerShell 7+（命令为 `pwsh`）和支持素材编码的浏览器**，推荐 Microsoft Edge 或 Chrome。未安装运行环境时，可从 [Node.js 24 官方下载目录](https://nodejs.org/dist/latest-v24.x/)选择 Windows `.msi` 安装版，并按 [微软官方说明](https://learn.microsoft.com/zh-cn/powershell/scripting/install/install-powershell-on-windows)安装 PowerShell 7；详细选择与检查方法见[安装说明](docs/install-windows.md)。
 
-下载 [media-review-0.3.0-beta.3-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.3/media-review-0.3.0-beta.3-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
+下载 [media-review-0.3.0-beta.4-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.4/media-review-0.3.0-beta.4-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
 
-安装完成后双击桌面图标，选择一段视频或音频，标记时间点并保存第一条意见。在首页“校对任务”中查看对应任务，点“查看资料”找到保存位置。[完整安装及 beta.1 升级说明](docs/install-windows.md)。
+安装完成后双击桌面图标，选择一段视频或音频，标记时间点并保存第一条意见。在首页“校对任务”中查看对应任务，点“查看资料”找到保存位置。[完整安装及旧版升级说明](docs/install-windows.md)。
 
 **请保留完整包，不能只复制 SKILL.md。** 源码仓库的 `skill/` 是打包模板，不是已经包含运行程序的安装包。
 
@@ -122,7 +122,7 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 
 ```sh
 npm test
-npm run build:skill -- --out release/media-review-0.3.0-beta.3
+npm run build:skill -- --out release/media-review-0.3.0-beta.4
 ```
 
 测试使用隔离目录，不需要真实用户媒体。构建命令生成完整 Skill 文件夹；它不执行安装、不上传或创建 GitHub Release，输出目录已存在时不会覆盖。安装包会保留自有源码许可与第三方声明。目录关系、测试范围与安装器参数见[开发说明](docs/development.md)。
@@ -132,3 +132,5 @@ npm run build:skill -- --out release/media-review-0.3.0-beta.3
 本项目自有源码采用 [MIT License](LICENSE)，可在保留版权与许可声明的条件下使用、修改和分发。此授权不覆盖下列第三方代码、字体与资产。
 
 第三方依赖和资产各自遵守原许可：GSAP 适用其 Standard License，MiSans 适用小米自定义许可，不能把它们重新标成 MIT 或 OFL。源码的原许可在 `public/licenses/`，完整安装包中对应 `app/dist/licenses/`，只是位置不同。原声明见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)、[GSAP 声明](public/licenses/GSAP-NOTICE.txt)及 [MiSans 原许可](public/licenses/MiSans-License.pdf)。
+
+桌面小电视图标是随项目分发的品牌资产，代码的MIT许可不构成对IP母源、名称或品牌标识的独立再授权。原母源和设计工程不在仓库或安装包内，详见[品牌图标说明](public/licenses/MEDIA-REVIEW-BRAND-NOTICE.txt)。

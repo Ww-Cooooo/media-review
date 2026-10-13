@@ -1,6 +1,6 @@
 {
   "name": "media-review",
-  "version": "0.3.0-beta.3",
+  "version": "0.3.0-beta.4",
   "private": true,
   "description": "本机音视频校对室与Agent主动校对Skill",
   "type": "module",

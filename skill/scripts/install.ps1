@@ -35,6 +35,8 @@ $target = if ($InitializeOnly) { $source } else { [IO.Path]::GetFullPath($Destin
 Assert-OrdinaryFile (Join-Path $source 'skill-package.json')
 $manifest = Get-Content -LiteralPath (Join-Path $source 'skill-package.json') -Raw | ConvertFrom-Json
 if ($manifest.name -ne 'media-review') { throw '安装包身份不符。' }
+$iconRelative = 'app/dist/brand/media-review-launcher.ico'
+if ($iconRelative -notin $manifest.files.path) { throw '安装包缺少启动图标登记，未安装或修改入口。' }
 foreach ($file in $manifest.files) {
   if ($file.path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($file.path)) { throw '安装包路径越界。' }
   $inputFile = Join-Path $source $file.path
@@ -95,6 +97,7 @@ $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $node
 $shortcut.Arguments = '"' + (Join-Path $target 'app\server\open.mjs') + '"'
 $shortcut.WorkingDirectory = Join-Path $target 'app'
+$shortcut.IconLocation = (Join-Path $target $iconRelative) + ',0'
 $shortcut.Description = '启动 Media Review 本机音视频校对室：按需启动或复用Node.js服务，不上传素材，不开机自启'
 $shortcut.WindowStyle = 7
 $shortcut.Save()

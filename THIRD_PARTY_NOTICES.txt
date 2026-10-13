@@ -1,5 +1,5 @@
 第三方依赖许可与声明
-本文件保留构建所用依赖的原声明；字体与GSAP原许可在源码public/licenses，完整安装包中对应app/dist/licenses。
+本文件保留构建所用依赖的原声明；字体、GSAP原许可及MEDIA-REVIEW-BRAND-NOTICE.txt品牌图标说明在源码public/licenses，完整安装包中对应app/dist/licenses。
 
 ===== node_modules/@ant-design/colors 8.0.1 / LICENSE =====
 MIT LICENSE
