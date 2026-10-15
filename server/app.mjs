@@ -105,13 +105,14 @@ async function saveRecord(reviews, record, baseRevision) {
     throw new RecordValidationError('已有记录的媒体身份不同，已原样保留');
   }
   await verifyReferences(reviews, record);
-  if (existing?.format === 'ai-carry-media-review/v2' && record.format !== existing.format) {
+  const formats = ['ai-carry-media-review/v1', 'ai-carry-media-review/v2', 'ai-carry-media-review/v3', 'ai-carry-media-review/v4', 'ai-carry-media-review/v5'];
+  if (existing && formats.indexOf(record.format) < formats.indexOf(existing.format)) {
     throw new RecordValidationError('不能用旧格式覆盖含参考画面的记录，请重新打开当前入口');
   }
-  if (existing?.format === 'ai-carry-media-review/v1' && record.format === 'ai-carry-media-review/v2') {
+  if (existing && formats.indexOf(record.format) > formats.indexOf(existing.format)) {
     const oldBytes = await fs.readFile(file);
     const digest = createHash('sha256').update(oldBytes).digest('hex').slice(0, 16);
-    const backup = path.join(reviews, `${fingerprint}.${digest}.v1.backup.json`);
+    const backup = path.join(reviews, `${fingerprint}.${digest}.${existing.format.split('/').at(-1)}.backup.json`);
     try { await fs.copyFile(file, backup, constants.COPYFILE_EXCL); }
     catch (cause) {
       if (cause.code !== 'EEXIST') throw cause;
@@ -429,7 +430,7 @@ export async function createReviewServer({
           if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'fingerprint') throw new RecordValidationError('导出请求无效');
           const fingerprint = validateFingerprint(body.fingerprint); await assertReviewsDirectory();
           const directory = await ordinaryDirectory(path.join(location.local, 'exports'));
-          return json(res, 200, await exportReview(root, fingerprint, path.join(directory, `review-${randomBytes(8).toString('hex')}`), await scoped(body)));
+          return json(res, 200, await exportReview(root, fingerprint, path.join(directory, `review-${randomBytes(8).toString('hex')}`), await scoped(body), context?.taskId ? { taskId: context.taskId, version: state.tasks.headers.get(context.taskId)?.version, sourceLabel: state.tasks.headers.get(context.taskId)?.label, progress: await state.progress.read(context.taskId) } : null));
         }
         if (pathname === '/api/reviews/load') {
           if (body === null || typeof body !== 'object' || Array.isArray(body) ||

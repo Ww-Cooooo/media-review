@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { RecordValidationError, validateRecord, validateFingerprint } from './review-record.mjs';
+import { RecordValidationError, validateRecord, validateFingerprint, COMPLETE_FORMAT } from './review-record.mjs';
 import { ordinaryDirectory, readJson, atomicJson, runtimePaths } from './runtime.mjs';
 
 export const MAX_WORKSPACE_BYTES = 24 * 1024 * 1024;
@@ -44,15 +44,16 @@ export async function enqueueMedia(root, source) {
 }
 
 function validateDraft(draft, media) {
-  if (!keys(draft, ['id','mode','kind','topic','startText','endText','text','rect','frameMs','reference','snapshot'])) bad('恢复草稿字段无效');
-  if (!(draft.id === null || typeof draft.id === 'string' && draft.id.length < 100) || ![null,'point','range','frame'].includes(draft.mode) || !['modify','keep','discuss'].includes(draft.kind) || ![null,'visual','subtitle','audio','pace','content','other'].includes(draft.topic)) bad('恢复草稿类型无效');
+  const multi = draft && Object.hasOwn(draft, 'regions');
+  if (!keys(draft, ['id','mode','kind','topic','startText','endText','text',multi ? 'regions' : 'rect','frameMs','reference','snapshot',...(Object.hasOwn(draft ?? {}, 'regionSerial') ? ['regionSerial'] : [])])) bad('恢复草稿字段无效');
+  if (!(draft.id === null || typeof draft.id === 'string' && draft.id.length < 100) || ![null,'point','range','frame','whole'].includes(draft.mode) || !['modify','keep','discuss'].includes(draft.kind) || ![null,'visual','subtitle','audio','pace','content','other'].includes(draft.topic)) bad('恢复草稿类型无效');
   if (typeof draft.text !== 'string' || draft.text.length > 2000 || typeof draft.startText !== 'string' || draft.startText.length > 64 || typeof draft.endText !== 'string' || draft.endText.length > 64 || !(draft.frameMs === null || integer(draft.frameMs, media.durationMs))) bad('恢复草稿内容无效');
   if (draft.snapshot !== null && (typeof draft.snapshot !== 'string' || draft.snapshot.length > 3 * 1024 * 1024 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/u.test(draft.snapshot))) bad('恢复参考画面无效');
-  validateRecord({ format: 'ai-carry-media-review/v2', media, notes: [{ id: 'draft-validation', kind: draft.kind, topic: draft.topic, startMs: 0, endMs: null, text: '草稿', rect: draft.rect, reference: draft.reference }] });
+  validateRecord({ format: COMPLETE_FORMAT, media, notes: [{ id: 'draft-validation', kind: draft.kind, topic: draft.topic, startMs: 0, endMs: null, text: '草稿', ...(multi ? { regions: draft.regions } : { rect: draft.rect }), reference: draft.reference, ...(draft.regionSerial !== undefined ? { regionSerial: draft.regionSerial } : {}) }] });
 }
 export function validateWorkspace(value) {
-  if (!keys(value, ['format','media','currentMs','notes','baseNotes','dirty','newDraft','editDraft','parked','view']) || value.format !== 'media-review-workspace/v1' || typeof value.dirty !== 'boolean' || !integer(value.currentMs, value.media?.durationMs ?? -1)) bad('恢复资料无效');
-  for (const notes of [value.notes, value.baseNotes]) validateRecord({ format: 'ai-carry-media-review/v2', media: value.media, notes });
+  if (!keys(value, ['format','media','currentMs','notes','baseNotes','dirty','newDraft','editDraft','parked','view']) || !['media-review-workspace/v1','media-review-workspace/v2','media-review-workspace/v3','media-review-workspace/v4'].includes(value.format) || typeof value.dirty !== 'boolean' || !integer(value.currentMs, value.media?.durationMs ?? -1)) bad('恢复资料无效');
+  for (const notes of [value.notes, value.baseNotes]) validateRecord({ format: COMPLETE_FORMAT, media: value.media, notes });
   if (!Array.isArray(value.parked) || value.parked.length > 8) bad('保留草稿过多，请先保存或处理');
   for (const draft of [value.newDraft, value.editDraft, ...value.parked]) validateDraft(draft, value.media);
   if (!value.view || !['new','detail','edit'].includes(value.view.kind) || !keys(value.view, value.view.kind === 'new' ? ['kind'] : ['kind','id']) || value.view.kind !== 'new' && !value.notes.some(note => note.id === value.view.id)) bad('恢复意见状态无效');

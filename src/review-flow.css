@@ -1,0 +1,49 @@
+/* Existing desktop styling; keep the player and active opinion within one view. */
+.whole-comment { margin-bottom: 10px; }
+.region-edit-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.region-edit-tools small { flex-basis: 100%; color: #816e53; font-size: 12px; }
+.task-search { margin: 14px 0 6px; }
+.task-search-count { font-size: 13px; color: #816e53; margin: 6px 0; }
+.brandbar { flex-wrap: wrap; gap: 10px; min-height: 64px; padding: 10px 22px; }
+.brand-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.brand-actions .privacy { display: none; }
+.task-context { margin: 8px 22px 0; padding: 7px 12px; flex-wrap: wrap; gap: 8px; }
+.workspace-wrap { padding-top: 10px; }
+.project-row { min-height: 40px; margin-bottom: 8px; }
+.workspace { margin-top: 8px; }
+.surface:not(.is-expanded):not(:fullscreen) { height: auto; grid-template-rows: auto minmax(0, 1fr) auto; }
+.surface:not(.is-expanded):not(:fullscreen) .viewer { height: clamp(240px, calc(100dvh - 350px), 490px); }
+.audio-view .surface:not(.is-expanded):not(:fullscreen) .viewer { height: 240px; }
+.surface:not(.is-expanded):not(:fullscreen) .viewer-side,
+.surface:not(.is-expanded):not(:fullscreen) .viewer-hint { display: none; }
+.surface-label { display: none; }
+.surface-tools { padding: 8px 12px; }
+.surface-actions { justify-content: flex-start; }
+.opinion { padding: 12px 15px; }
+.opinion-instruction { margin: 6px 0 8px; font-size: 13px; }
+.note-target { min-height: 72px; padding: 8px 10px; }
+.target-text p { margin: 3px 0; }
+.target-text .ant-btn { display: inline-flex; margin-right: 10px; padding-block: 1px; }
+.target-text strong { font-size: 16px; }
+.opinion .ant-form-item { margin-bottom: 8px; }
+.note-options { margin-bottom: 8px; padding-bottom: 6px; }
+.opinion textarea.ant-input { line-height: 1.6; }
+.note-safe { margin-top: 6px; font-size: 12px; }
+.project-row .step-line { display: none; }
+@media (max-width: 1440px) {
+  .brand .tool-name, .brand-actions .save-indicator { display: none; }
+  .brandbar { gap: 6px; }
+  .brand-actions>.ant-btn { padding-inline: 9px; }
+  .workspace { grid-template-columns: minmax(0, 1fr) 390px; gap: 16px; }
+  .transport { gap: 8px; padding-inline: 12px; }
+  .transport small { display: none; }
+  .surface-tools .ant-btn { padding: 5px 8px; min-height: 34px; }
+}
+@media (max-width: 1100px) {
+  .brandbar { position: relative; }
+  .brand-actions { justify-content: flex-start; }
+  .workspace { grid-template-columns: minmax(0, 1fr) 350px; gap: 12px; }
+  .workspace-wrap { padding-inline: 16px; }
+  .video-view-actions .ant-btn { width: 32px; padding-inline: 4px; }
+  .video-view-actions .ant-btn>span:not(.anticon) { display: none; }
+}

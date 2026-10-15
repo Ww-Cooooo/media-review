@@ -39,6 +39,8 @@ node scripts/review-agent.mjs open --no-browser
 npm test
 ```
 
+测试也覆盖范围和多框、整片意见、零意见完成、旧记录升级备份、禁止降级丢字段、版本关系、返修进度、用户确认边界、固定交接快照、任务归档、字幕持久化和带编号导出。
+
 测试覆盖原存储／认证／参考图／恢复／交接，以及跨副本十进程冷启动、任务隔离、保存版本校验、编辑租约、旧inbox兼容、空台生命周期、单分析槽、队列容量、上传TTL、取消信号转发、完整内容绑定、可重建结果回收和恢复归档。测试使用隔离目录和合成小样，资源／时钟／工具失败的部分情形是明确的模拟，不需要真实用户意见。
 
 这些 Node 测试不替代浏览器交互、安装器首次安装、真实音视频转写或完整视觉／听感验收。本机通过也不能推导另一台电脑、所有宿主或其他系统均通过。仓库尚未配置或运行远程 CI，不提供虚构的 CI 通过徽章。
@@ -50,7 +52,7 @@ npm test
 在仓库根目录执行；构建器会将自有源码许可及第三方声明一起带入完整包：
 
 ```sh
-npm run build:skill -- --out release/media-review-0.3.0-beta.4
+npm run build:skill -- --out release/media-review-0.3.0-beta.5
 ```
 
 输出应包含 SKILL.md、README、LICENSE、`skill-package.json`、Windows 启动／安装文件、`scripts/` 和自包含的 `app/`。桌面图标位于`app/dist/brand/media-review-launcher.ico`，多尺寸ICO及品牌说明均登记在清单内；安装和`-InitializeOnly`均为快捷方式设置本安装目录的IconLocation，不引用构建或临时测试目录。包内 `app/` 带构建资源与原生 Node 服务，终端用户不需要 npm 或 node_modules，但仍须安装 Node.js 24+、PowerShell 7+ 及浏览器。

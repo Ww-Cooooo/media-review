@@ -57,13 +57,13 @@ export async function connectReview({ rootDir = ROOT, start = true } = {}) {
   return { entry, reused, post };
 }
 
-export async function openReview({ rootDir = ROOT, media = null, taskId = null, browser = true, forceBrowser = false, requestId, title, label, inspect = false } = {}) {
+export async function openReview({ rootDir = ROOT, media = null, taskId = null, browser = true, forceBrowser = false, requestId, title, label, previousTaskId = null, sampleTimesMs = [], inspect = false } = {}) {
   if (media && taskId) throw new ReviewError('带入新媒体与打开已有任务不能同时指定；原任务未改动', 'invalid_task', 400);
   const { entry, reused, post } = await connectReview({ rootDir });
-  const task = media ? (await post('/api/tasks/register', { source: path.resolve(media), requestId, title, label })).task : taskId ? (await post('/api/tasks/get', { taskId })).task : null;
+  const task = media ? (await post('/api/tasks/register', { source: path.resolve(media), requestId, title, label, previousTaskId })).task : taskId ? (await post('/api/tasks/get', { taskId })).task : null;
   let inspection = null;
   if (task && inspect) {
-    try { inspection = (await post('/api/jobs/enqueue', { taskId: task.id, kind: 'inspection' })).job; }
+    try { inspection = (await post('/api/jobs/enqueue', { taskId: task.id, kind: 'inspection', sampleTimesMs })).job; }
     catch (cause) { inspection = { state: 'not-queued', message: cause.message }; }
   }
   const taskUrl = task ? `${entry.url}/?task=${task.id}` : entry.url;

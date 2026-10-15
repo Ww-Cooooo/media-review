@@ -14,7 +14,8 @@ async function entries(directory) {
   try { await checkedDirectory(directory); return await fs.readdir(directory, { withFileTypes: true }); }
   catch (cause) { if (cause.code === 'ENOENT') return []; throw cause; }
 }
-const hasWork = draft => !!(draft.text.length || draft.mode || draft.rect || draft.reference || draft.kind !== 'modify' || draft.topic);
+const regionsOf = value => value.regions ?? (value.rect ? [{ id: 1, rect: value.rect }] : []);
+const hasWork = draft => !!(draft.text.length || draft.mode || regionsOf(draft).length || draft.reference || draft.kind !== 'modify' || draft.topic);
 const timeText = ms => `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms % 60000 / 1000)).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`;
 
 export async function listReviewHistory(reviews) {
@@ -57,8 +58,8 @@ export async function listReviewHistory(reviews) {
       const edited = workspace.view.kind === 'edit' && selected && (() => {
         const draft = workspace.editDraft;
         return draft.text !== selected.text || draft.kind !== selected.kind || draft.topic !== (selected.topic ?? null) ||
-          draft.startText !== timeText(selected.startMs) || draft.endText !== (selected.endMs === null ? '' : timeText(selected.endMs)) || draft.frameMs !== (selected.reference?.frameMs ?? null) ||
-          JSON.stringify(draft.rect) !== JSON.stringify(selected.rect) || JSON.stringify(draft.reference) !== JSON.stringify(selected.reference ?? null);
+          draft.startText !== (selected.scope === 'whole' ? '' : timeText(selected.startMs)) || (draft.mode === 'whole') !== (selected.scope === 'whole') || draft.endText !== (selected.endMs === null ? '' : timeText(selected.endMs)) || draft.frameMs !== (selected.reference?.frameMs ?? null) ||
+          JSON.stringify(regionsOf(draft)) !== JSON.stringify(regionsOf(selected)) || JSON.stringify(draft.reference) !== JSON.stringify(selected.reference ?? null);
       })();
       item.hasDraft = workspace.dirty || hasWork(workspace.newDraft) || workspace.parked.some(hasWork) || !!edited;
     } catch { item.errors.push('恢复副本无法读取，原文件保留'); }

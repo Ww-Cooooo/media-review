@@ -1,3 +1,5 @@
+import { ReviewProgress } from './review-progress.mjs';
+import { productRoute } from './review-product.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -15,6 +17,7 @@ export class ReviewService {
     this.root = root; this.local = local; this.locationOpener = options.locationOpener;
     this.tasks = new ReviewTasks(local, reviews, options.tasks);
     this.clients = new ReviewClients(options.clients);
+    this.progress = new ReviewProgress(this.tasks);
     this.cache = new AnalysisCache(local, options.cache);
     this.queue = new AnalysisQueue(local, (job, signal, progress) => this.execute(job, signal, progress), options.queue);
     this.uploads = new MediaAnalysisService(root, {
@@ -85,8 +88,9 @@ export class ReviewService {
     }
     return directory;
   }
-  async enqueue(taskId, kind, durationMs = null) {
+  async enqueue(taskId, kind, durationMs = null, sampleTimesMs = []) {
     if (!['inspection', 'media'].includes(kind)) throw new ReviewError('分析种类无效', 'invalid_job', 400);
+    if (!Array.isArray(sampleTimesMs) || sampleTimesMs.length > 100 || sampleTimesMs.some(time => !Number.isSafeInteger(time) || time < 0 || time > 172800000)) throw new ReviewError('检查位置无效', 'invalid_job', 400);
     const task = await this.tasks.read(taskIdentity(taskId));
     if (task.status !== 'waiting') throw new ReviewError('任务尚未开始等待或已结束，请先明确继续', 'task_closed');
     const media = await this.tasks.source(taskId);
@@ -96,15 +100,15 @@ export class ReviewService {
       await this.tasks.setDuration(taskId, durationMs);
     }
     const profile = await analysisProfile(this.root, kind);
-    const key = createHash('sha256').update(JSON.stringify({ media, profile: profile.key, durationMs, kind })).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify({ media, profile: profile.key, durationMs, kind, sampleTimesMs })).digest('hex');
     const previousId = task.jobs[kind];
     if (previousId) {
       const old = await this.queue.read(previousId).catch(() => null);
       if (old?.state === 'completed') {
         // 完成结果复用前仍进入单槽验证完整内容，不能只凭抽样指纹或文件名命中。
-      } else if (old && old.owners.includes(taskId) && ['queued', 'running', 'waiting-resources'].includes(old.state)) return old;
+      } else if (old && old.owners.includes(taskId) && ['queued', 'running', 'waiting-resources'].includes(old.state)) { if (old.key !== key) throw new ReviewError('同一任务的其他检查正在运行，请完成或撤回后再提交新的检查范围', 'inspection_in_progress'); return old; }
     }
-    const job = await this.queue.enqueue({ kind, owner: taskId, key, payload: { taskId, durationMs }, priority: kind === 'media' ? 1 : 0, memoryBytes: profile.memoryBytes });
+    const job = await this.queue.enqueue({ kind, owner: taskId, key, payload: { taskId, durationMs, sampleTimesMs }, priority: kind === 'media' ? 1 : 0, memoryBytes: profile.memoryBytes });
     await this.tasks.setJob(taskId, kind, job.id); return job;
   }
   async cacheRead(key) {
@@ -120,10 +124,10 @@ export class ReviewService {
     if (profile.memoryBytes > job.memoryBytes) throw new ReviewError('模型或工具已变化，请重新排队以核对资源预算', 'tool_changed');
     const hash = await contentHash(source.source, signal);
     for (const owner of job.owners) await this.tasks.bindContent(owner, hash);
-    const key = this.cache.key(job.kind, hash, `${profile.key}:${job.payload.durationMs ?? ''}`);
+    const key = this.cache.key(job.kind, hash, `${profile.key}:${job.payload.durationMs ?? ''}:${JSON.stringify(job.payload.sampleTimesMs ?? [])}`);
     const cached = await this.cacheRead(key);
     let result = cached;
-    if (!result && job.kind === 'inspection') result = await selfCheck(this.root, source.source, { signal });
+    if (!result && job.kind === 'inspection') result = await selfCheck(this.root, source.source, { signal, sampleTimesMs: job.payload.sampleTimesMs ?? [] });
     if (!result && job.kind === 'media') {
       const service = new MediaAnalysisService(this.root);
       const events = []; let partial = Promise.resolve();
@@ -139,6 +143,7 @@ export class ReviewService {
         result = { format: 'media-review-analysis/v1', events };
       } finally { await service.close(); }
     }
+    if (job.kind === 'inspection' && result.durationSeconds) await this.tasks.setDuration(job.payload.taskId, Math.round(result.durationSeconds * 1000));
     signal.throwIfAborted();
     if (await contentHash(source.source, signal) !== hash) throw new ReviewError('原媒体在分析期间变化，未将结果记为完成', 'media_changed');
     if (!cached) await this.cacheWrite(key, result);
@@ -192,8 +197,10 @@ export class ReviewService {
     } finally { stream.destroy(); await media.handle.close().catch(() => {}); }
   }
   async route(pathname, body, context) {
-    if (pathname === '/api/tasks/register') return { task: await this.tasks.registerSource(body.source, { requestId: body.requestId, title: body.title, label: body.label }) };
-    if (pathname === '/api/tasks/manual') return { task: await this.tasks.registerManual(body.media, { requestId: body.requestId, newTask: body.newTask, mtimeMs: body.mtimeMs, label: body.label }) };
+    if (pathname === '/api/tasks/register') return { task: await this.tasks.registerSource(body.source, { requestId: body.requestId, title: body.title, label: body.label, previousTaskId: body.previousTaskId }) };
+    if (pathname === '/api/tasks/manual') return { task: await this.tasks.registerManual(body.media, { requestId: body.requestId, newTask: body.newTask, mtimeMs: body.mtimeMs, label: body.label, previousTaskId: body.previousTaskId }) };
+    const product = await productRoute(this, pathname, body, context);
+    if (product !== null) return product;
     if (pathname === '/api/tasks/list') {
       const data = this.tasks.list(body);
       data.items = await Promise.all(data.items.map(async task => ({ ...task, jobStates: Object.fromEntries(await Promise.all(Object.entries(task.jobs).slice(0, 2).map(async ([kind, id]) => {
@@ -239,7 +246,7 @@ export class ReviewService {
     if (pathname === '/api/browser/claim') return this.clients.browserClaim(body.force === true);
     if (pathname === '/api/session/activity') return this.analysisActivity();
     if (pathname === '/api/session/summary') return this.summary();
-    if (pathname === '/api/jobs/enqueue') return { job: await this.enqueue(body.taskId, body.kind, body.durationMs) };
+    if (pathname === '/api/jobs/enqueue') return { job: await this.enqueue(body.taskId, body.kind, body.durationMs, body.sampleTimesMs) };
     if (pathname === '/api/jobs/status') return { job: await this.queue.read(body.id, body.result === true) };
     if (pathname === '/api/jobs/cancel') return this.queue.cancel(body.id, taskIdentity(body.taskId));
     return null;

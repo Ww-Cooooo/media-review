@@ -1,5 +1,6 @@
+import { loadImportedTranscript, saveImportedTranscript } from '../lib/review-product';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Empty, Progress, Spin, Switch, Tooltip } from 'antd';
+import { App, Button, Empty, Input, Progress, Spin, Switch, Tooltip } from 'antd';
 import { ANALYSIS_LABEL } from '../lib/analysis-status';
 import type { AnalysisProgress } from '../lib/api';
 import { ScissorOutlined } from '@ant-design/icons';
@@ -15,6 +16,8 @@ export interface TranscriptCue {
 }
 
 export interface TranscriptPanelProps {
+  taskId?: string;
+  onImportedCues?: (cues: TranscriptCue[] | null) => void;
   disabled?: boolean;
   mediaKey: string;
   cues: TranscriptCue[];
@@ -98,7 +101,21 @@ export function parseTranscriptText(source: string, format: TranscriptFormat): T
   return cues.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
 }
 
-export function TranscriptPanel({ disabled = false, mediaKey, cues, status, error, progress = { phase: 'preparing', percent: null }, elapsedMs = 0, onCancel, onRetry, currentMs, durationMs, onSeek, onMark }: TranscriptPanelProps) {
+export function TranscriptPanel({ taskId, onImportedCues, disabled = false, mediaKey, cues: automaticCues, status, error, progress = { phase: 'preparing', percent: null }, elapsedMs = 0, onCancel, onRetry, currentMs, durationMs, onSeek, onMark }: TranscriptPanelProps) {
+  const { message } = App.useApp();
+  const [query, setQuery] = useState(''), [imported, setImported] = useState<{ name: string; cues: TranscriptCue[] } | null>(null), [importing, setImporting] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const callback = useRef(onImportedCues); callback.current = onImportedCues;
+  const cues = imported?.cues ?? automaticCues;
+  useEffect(() => { setImported(null); setQuery(''); callback.current?.(null); if (!taskId) return; let cancelled = false; void loadImportedTranscript(taskId).then(({ transcript }) => { if (!cancelled && transcript) { setImported(transcript); callback.current?.(transcript.cues); } }).catch(cause => { if (!cancelled) message.warning(cause.message); }); return () => { cancelled = true; }; }, [taskId]);
+  async function importFile(file?: File) {
+    if (!file || !taskId) return;
+    if (file.size > 512 * 1024 || !/\.(srt|vtt)$/i.test(file.name)) { message.error('请选择不超过 512 KiB 的 UTF-8 SRT 或 VTT 字幕'); return; }
+    setImporting(true);
+    try { const parsed = parseTranscriptText(await file.text(), /\.vtt$/i.test(file.name) ? 'vtt' : 'srt'); const { transcript } = await saveImportedTranscript(taskId, file.name, parsed); setImported(transcript); callback.current?.(transcript.cues); message.success(`已导入 ${parsed.length} 句；按本版时间码定位，请回听核对`); }
+    catch (cause) { message.error(cause instanceof Error ? cause.message : '字幕导入未完成，原内容保留'); }
+    finally { setImporting(false); }
+  }
   const [followPlayback, setFollowPlayback] = useState(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   const estimated = useEstimatedProgress(progress, status === 'loading', mediaKey);
@@ -115,7 +132,7 @@ export function TranscriptPanel({ disabled = false, mediaKey, cues, status, erro
   }, [cues, currentMs]);
 
   useEffect(() => {
-    if (!followPlayback || activeIndex < 0 || !listRef.current) return;
+    if (query || !followPlayback || activeIndex < 0 || !listRef.current) return;
     const list = listRef.current;
     const item = list.children[activeIndex] as HTMLElement | undefined;
     if (!item) return;
@@ -123,24 +140,27 @@ export function TranscriptPanel({ disabled = false, mediaKey, cues, status, erro
     const itemBounds = item.getBoundingClientRect();
     const position = list.scrollTop + itemBounds.top - listBounds.top - (list.clientHeight - itemBounds.height) / 2;
     list.scrollTo({ top: Math.max(0, position), behavior: 'auto' });
-  }, [activeIndex, followPlayback]);
+  }, [activeIndex, followPlayback, query]);
 
   const exceedsMedia = !!durationMs && cues.some((cue) => cue.startMs >= durationMs || cue.endMs > durationMs + 1_000);
 
   return <section className="transcript-content" aria-label="字幕对照">
-    <div className="panel-description"><span>本机自动识别 · 未校对</span><label className="transcript-follow"><Switch size="small" checked={followPlayback} onChange={setFollowPlayback} aria-label="字幕跟随播放" />跟随播放</label></div>
-    {error && <p className="transcript-status error" role="alert">{error}</p>}
-    {status === 'loading' && <div className="transcript-progress" data-phase={progress.phase} data-percent={progress.percent ?? ''} aria-busy="true">
+    <div className="panel-description"><span>{imported ? `已导入：${imported.name}` : '本机自动识别 · 未校对'}</span><label className="transcript-follow"><Switch size="small" checked={followPlayback} onChange={setFollowPlayback} aria-label="字幕跟随播放" />跟随播放</label></div>
+    <div className="transcript-tools"><Input.Search aria-label="搜索字幕关键词" placeholder="搜索字幕关键词" value={query} allowClear onChange={event => { setQuery(event.target.value); setFollowPlayback(false); }} /><Button size="small" disabled={disabled || !taskId} loading={importing} onClick={() => fileInput.current?.click()}>导入 SRT / VTT</Button><input ref={fileInput} type="file" accept=".srt,.vtt" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void importFile(file); }} /></div>
+    {query && <p role="status">找到 {cues.filter(cue => cue.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())).length} 句</p>}
+    {!imported && error && <p className="transcript-status error" role="alert">{error}</p>}
+    {!imported && status === 'loading' && <div className="transcript-progress" data-phase={progress.phase} data-percent={progress.percent ?? ''} aria-busy="true">
       <div className="transcript-progress-title" role="status"><Spin size="small" /><strong>{ANALYSIS_LABEL[progress.phase]}</strong></div>
       {estimated.display !== null && <><div className="estimated-readout"><strong>预计 {estimated.display.toFixed(1)}%</strong></div><Progress percent={estimated.display} status="normal" showInfo={false} strokeColor="#b95337" /></>}
       <div className="transcript-progress-meta"><span>已用 {formatTime(elapsedMs, false)}</span>{onCancel && <Button type="text" size="small" onClick={onCancel}>停止识别</Button>}</div>
       <p>{progress.phase === 'queued' ? '多个任务共用一个重分析槽。这里只是排队，不表示识别已开始或已经通过；仍可手动校对。' : progress.phase === 'waiting-resources' ? '可用内存不足，已暂停重分析，不会结束其他程序。可以先播放和写意见，资源恢复后继续。' : estimated.silentMs > 90_000 ? '较长时间没有新进度回报。当前估算已接近上限；可以继续等候，或停止后重试，意见不受影响。' : progress.phase === 'loading-model' ? '本机正在加载语音模型，尚无可量化百分比。' : progress.phase === 'finalizing' ? '正在整理文字和时间码，结果返回前不会显示完成。' : '两次真实回报之间有限估算当前阶段；不是完成承诺，也不代表识别变快。仍可播放、选段和写意见。'}</p>
     </div>}
-    {status === 'unavailable' && onRetry && <div className="transcript-retry"><Button size="small" onClick={onRetry} disabled={!durationMs}>重新识别台词</Button><span>重试不会清空意见或修改原媒体。</span></div>}
-    {status === 'ready' && <p className="transcript-ready" role="status">已生成 {cues.length} 句台词 · 自动识别，未校对</p>}
+    {!imported && status === 'unavailable' && onRetry && <div className="transcript-retry"><Button size="small" onClick={onRetry} disabled={!durationMs}>重新识别台词</Button><span>重试不会清空意见或修改原媒体。</span></div>}
+    {!imported && status === 'ready' && <p className="transcript-ready" role="status">已生成 {cues.length} 句台词 · 自动识别，未校对</p>}
     {exceedsMedia && <p className="transcript-status error" role="status">部分台词时间超出媒体，不能定位或标记；请核对是否同一版本。</p>}
     {cues.length > 0 ? <div className="cue-list" ref={listRef} data-lenis-prevent aria-label="按时间排列的字幕" onWheel={() => setFollowPlayback(false)}>
       {cues.map((cue, index) => {
+        if (query && !cue.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())) return null;
         const active = index === activeIndex;
         const outside = !!durationMs && cue.startMs >= durationMs;
         return <div className={`cue-row ${active ? 'active' : ''}`} key={`${cue.startMs}-${cue.endMs}-${index}`}>

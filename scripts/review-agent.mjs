@@ -6,6 +6,7 @@ import { runtimePaths, readJson } from '../server/runtime.mjs';
 import { exitLegacy } from '../server/legacy-exit.mjs';
 import { ReviewTasks, taskIdentity } from '../server/review-tasks.mjs';
 import { exportReview } from '../server/review-export.mjs';
+import { ReviewProgress } from '../server/review-progress.mjs';
 export { selfCheck } from '../server/self-check.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,7 +22,13 @@ export async function runAgentCLI(args = process.argv.slice(2), root = ROOT) {
   const media = option('--media'), taskId = option('--task');
   if (command === 'help' || args.includes('--help')) {
     output({ contract: 'media-review-agent/v2', commands: {
-      'after-export': '--media <绝对路径> [--request-id <UUID>] [--label <来源>] [--no-browser]：登记独立任务并排队自检；快速返回，不表示已检查完成',
+      'progress': '--task <ID> [--note <意见ID> --revision <意见修订> --state pending|clarify|changed --text <说明> --target <新版任务ID> --at <新版毫秒位置>]：未指定note时读回，Agent不能确认',
+      'acknowledge': '--task <ID> --revision <修订> --agent <接手对话名> [--clarify <逗号分隔意见ID>] [--text <说明>]：固定轮次接手回执',
+      'check-report': '--task <ID> --report <JSON路径>：记录实际检查范围、发现、未核实项、保留项',
+      'versions': '--task <ID>：读回同作品版本、意见与处理状态',
+      'round': '--task <ID> --revision <修订>：读取固定交接快照',
+      'readiness': '查询运行版本、工具与宿主接入线索',
+      'after-export': '--media <绝对路径> [--request-id <UUID>] [--label <来源>] [--previous-task <原版任务ID>] [--check-times <新版毫秒位置,位置>] [--no-browser]：登记独立任务并排队自检；快速返回，不表示已检查完成',
       'self-check': '同after-export，但默认不打开网页',
       'open': '[--task <已有taskId> | --media <绝对路径>] [--no-browser]：打开指定已有任务不新建；不指定任务时只打开共用校对室',
       'status': '--task <taskId> [--job <jobId>] [--result]：查实际任务与证据状态；完成后才读取结果',
@@ -37,7 +44,7 @@ export async function runAgentCLI(args = process.argv.slice(2), root = ROOT) {
   }
   if (command === 'after-export' || command === 'self-check' || command === 'open') {
     if (command !== 'open' && !media) throw new Error('需要--media明确指定已经导出完毕的成片');
-    const result = await openReview({ rootDir: root, media, taskId: command === 'open' ? taskId : null, browser: command !== 'self-check' && !args.includes('--no-browser'), forceBrowser: command === 'open', requestId: option('--request-id') ?? taskId, title: option('--title'), label: option('--label'), inspect: command !== 'open' });
+    const result = await openReview({ rootDir: root, media, taskId: command === 'open' ? taskId : null, browser: command !== 'self-check' && !args.includes('--no-browser'), forceBrowser: command === 'open', requestId: option('--request-id') ?? taskId, title: option('--title'), label: option('--label'), previousTaskId: option('--previous-task') ?? null, sampleTimesMs: option('--check-times')?.split(',').map(Number) ?? [], inspect: command !== 'open' });
     output(result); if (result.inspection?.state === 'not-queued') process.exitCode = 2;
     return;
   }
@@ -47,7 +54,7 @@ export async function runAgentCLI(args = process.argv.slice(2), root = ROOT) {
     const location = await runtimePaths(root);
     const tasks = await new ReviewTasks(location.local, location.reviews).init();
     if (!taskId && !args.includes('--legacy') && [...tasks.headers.values()].some(task => !task.legacy && task.media.fingerprint === fingerprint)) throw new Error('这份媒体存在独立任务，请用--task指定；明确只导出旧全局资料时需--legacy，未猜测归属');
-    output(await exportReview(root, fingerprint, out, taskId ? await tasks.scope(taskId, fingerprint) : null)); return;
+    output(await exportReview(root, fingerprint, out, taskId ? await tasks.scope(taskId, fingerprint) : null, taskId ? { taskId, version: tasks.headers.get(taskId)?.version, sourceLabel: tasks.headers.get(taskId)?.label, progress: await new ReviewProgress(tasks).read(taskId) } : null)); return;
   }
   if (command === 'quit-legacy') { output(await exitLegacy(option('--legacy-root'), args.includes('--confirm'))); return; }
   if (command === 'doctor') {
@@ -61,6 +68,29 @@ export async function runAgentCLI(args = process.argv.slice(2), root = ROOT) {
     output({ node: process.versions.node, ffmpeg: await available(tools?.ffmpeg), whisper: await available(tools?.whisper), model: await available(tools?.model), lifecycle, localOnly: true }); return;
   }
   const { entry, post } = await connectReview({ rootDir: root, start: false });
+  if (['progress', 'acknowledge', 'check-report', 'versions', 'round', 'readiness'].includes(command)) {
+    if (command === 'readiness') { output(await post('/api/session/readiness', {})); return; }
+    if (!taskId) throw new Error('需要 --task 明确任务');
+    if (command === 'versions') { output(await post('/api/tasks/versions', { taskId })); return; }
+    if (command === 'round') {
+      if (!option('--revision')) throw new Error('读取交接需要 --revision');
+      output(await post('/api/handoff/read', { taskId, revision: option('--revision') })); return;
+    }
+    const bundle = await post('/api/progress/load', { taskId });
+    if (command === 'progress' && !option('--note')) { output(bundle); return; }
+    const common = { taskId, baseRevision: option('--progress-revision') ?? bundle.progress.revision };
+    if (command === 'progress') {
+      if (!option('--revision')) throw new Error('更新进度需要本轮 --revision，不会猜测处理的是哪轮意见');
+      output(await post('/api/progress/update', { ...common, recordRevision: option('--revision'), noteId: option('--note'), status: option('--state'), text: option('--text') ?? '', actor: 'agent', targetTaskId: option('--target') ?? null, targetMs: option('--at') ? Number(option('--at')) : null })); return;
+    }
+    if (command === 'acknowledge') {
+      if (!option('--revision') || !option('--agent')) throw new Error('接手回执需要 --revision 和 --agent');
+      output(await post('/api/progress/acknowledge', { ...common, recordRevision: option('--revision'), agent: option('--agent'), text: option('--text') ?? '', clarifications: option('--clarify')?.split(',').filter(Boolean) ?? [] })); return;
+    }
+    if (!option('--report')) throw new Error('检查报告需要 --report 指向已写好的 JSON 文件');
+    const report = await readJson(path.resolve(option('--report')), 256 * 1024);
+    output(await post('/api/progress/check', { ...report, ...common })); return;
+  }
   if (command === 'tasks') { output(await post('/api/tasks/list', {})); return; }
   if (command === 'summary') { output(await post('/api/session/summary', {})); return; }
   if (command === 'status') {

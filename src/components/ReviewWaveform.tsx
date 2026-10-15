@@ -5,12 +5,12 @@ import { formatTime, KIND_LABEL, type ReviewNote } from '../lib/review';
 
 interface Props {
   peaks: number[]; durationMs: number; currentMs: number; viewStartMs: number; viewEndMs: number;
-  selection: { start: number; end: number } | null; selecting: boolean; disabled: boolean; large?: boolean; contrast: boolean;
+  selection: { start: number; end: number } | null; pendingStart?: number | null; selecting: boolean; disabled: boolean; large?: boolean; contrast: boolean;
   notes: ReviewNote[]; onSeek: (ms: number) => void; onNote: (note: ReviewNote) => void;
   onRangeChange: (start: number, end: number) => void; onRangeDone: (start: number, end: number) => void;
   onRangeCancel?: () => void;
 }
-export function ReviewWaveform({ peaks, currentMs, durationMs, viewStartMs, viewEndMs, selection, selecting, disabled, large, contrast, notes, onSeek, onNote, onRangeChange, onRangeDone, onRangeCancel }: Props) {
+export function ReviewWaveform({ peaks, currentMs, durationMs, viewStartMs, viewEndMs, selection, pendingStart = null, selecting, disabled, large, contrast, notes, onSeek, onNote, onRangeChange, onRangeDone, onRangeCancel }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const [barCount, setBarCount] = useState(320);
   const [hover, setHover] = useState<{ time: number; rms: number } | null>(null);
@@ -69,9 +69,10 @@ export function ReviewWaveform({ peaks, currentMs, durationMs, viewStartMs, view
     {selection && selection.end > viewStartMs && selection.start < viewEndMs && <div className="range-shade" style={{ left: `${pct(selection.start)}%`, width: `${pct(selection.end) - pct(selection.start)}%` }}>
       {selecting && <><span className="range-grip start" data-handle="start" /><span className="range-grip end" data-handle="end" /></>}
     </div>}
+    {pendingStart !== null && pendingStart >= viewStartMs && pendingStart <= viewEndMs && <div className="range-start-marker" style={{ left: `${pct(pendingStart)}%` }}><span>起点 {formatTime(pendingStart)}</span></div>}
     {currentMs >= viewStartMs && currentMs <= viewEndMs && <div className="playhead" style={{ left: `${pct(currentMs)}%` }} />}
-    {notes.filter(note => note.startMs >= viewStartMs && note.startMs <= viewEndMs).map(note => <Button key={note.id} type="text" disabled={disabled} className={`wave-note kind-${note.kind}`}
-      aria-label={`${KIND_LABEL[note.kind]}意见：${formatTime(note.startMs)}`} title={note.text} style={{ left: `${pct(note.startMs)}%` }} onClick={event => { event.stopPropagation(); onNote(note); }}>●</Button>)}
+    {notes.filter(note => note.startMs !== null && note.startMs >= viewStartMs && note.startMs <= viewEndMs).map(note => <Button key={note.id} type="text" disabled={disabled} className={`wave-note kind-${note.kind}`}
+      aria-label={`${KIND_LABEL[note.kind]}意见：${formatTime(note.startMs!)}`} title={note.text} style={{ left: `${pct(note.startMs!)}%` }} onClick={event => { event.stopPropagation(); onNote(note); }}>●</Button>)}
     {hover && <span className="wave-hover" style={{ left: `${Math.min(78, pct(hover.time))}%` }}>{formatTime(hover.time)} · RMS {hover.rms.toFixed(3)}</span>}
   </div>;
 }

@@ -25,7 +25,7 @@ export async function analysisProfile(root, kind) {
     if (!stat.isFile() || stat.isSymbolicLink()) throw new ReviewError('本机工具或模型绑定已变化', 'tool_changed');
     return { file, size: stat.size, mtimeMs: stat.mtimeMs };
   }));
-  return { key: createHash('sha256').update(JSON.stringify({ format: 'analysis-profile/v2', kind, stamps, threads: ANALYSIS_THREADS, language: 'zh', waveform: 'rms-16k-36k', transcriptLimitMs: 1800000 })).digest('hex'), memoryBytes: Math.max(512 * 1024 * 1024, (stamps[2]?.size ?? 0) * 3 + 256 * 1024 * 1024) };
+  return { key: createHash('sha256').update(JSON.stringify({ format: 'analysis-profile/v2', kind, inspection: kind === 'inspection' ? 'targeted-v2' : null, stamps, threads: ANALYSIS_THREADS, language: 'zh', waveform: 'rms-16k-36k', transcriptLimitMs: 1800000 })).digest('hex'), memoryBytes: Math.max(512 * 1024 * 1024, (stamps[2]?.size ?? 0) * 3 + 256 * 1024 * 1024) };
 }
 
 export class AnalysisCache {

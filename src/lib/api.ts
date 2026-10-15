@@ -82,6 +82,7 @@ export const openReviewLocation = (scope: 'all' | 'record' | 'draft' | 'referenc
 
 export const exportRecord = (fingerprint: string) => request<{ exported: boolean; directory: string }>('/api/reviews/export', { fingerprint }, AbortSignal.timeout(30_000));
 export interface ReviewTask {
+  version: { workId: string; parentTaskId: string | null; number: number }; archivedAt: string | null; lastOpenedAt: string | null;
   id: string; title: string; label: string; status: 'waiting' | 'closed' | 'legacy'; createdAt: string; updatedAt: string;
   manual: boolean; legacy: boolean; contentHash?: string | null; jobStates?: Record<string, string>; media: Omit<WorkflowMedia, 'id'> & { durationMs?: number }; jobs: Record<string, string>;
 }
@@ -96,9 +97,9 @@ export interface AnalysisActivity { runtimeId: string; items: AnalysisActivityIt
 export interface TaskList { items: ReviewTask[]; total: number; active: number; warnings: string[]; service: ServiceSummary; activity: AnalysisActivity }
 export const analysisActivity = () => request<AnalysisActivity>('/api/session/activity', {}, AbortSignal.timeout(8000));
 export interface AnalysisJob { id: string; kind: string; state: 'queued' | 'waiting-resources' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'expired'; message: string; partialReady: boolean; progress: { phase: Exclude<AnalysisPhase, 'preparing' | 'uploading'>; percent: number | null } | null; result?: { events: MediaAnalysisEvent[] }; owners: string[] }
-export const listTasks = (offset = 0, closed = false) => request<TaskList>('/api/tasks/list', { offset, limit: 8, closed }, AbortSignal.timeout(8000));
+export const listTasks = (offset = 0, closed = false, query = '', filter = '', sort = 'created') => request<TaskList>('/api/tasks/list', { offset, limit: 8, closed, query, filter, sort }, AbortSignal.timeout(8000));
 export const getTask = (taskId: string) => request<{ task: ReviewTask }>('/api/tasks/get', { taskId });
-export const registerManualTask = (media: ReviewRecord['media'], requestId: string, mtimeMs = 0, newTask = false) => request<{ task: ReviewTask }>('/api/tasks/manual', { media, requestId, mtimeMs, newTask });
+export const registerManualTask = (media: ReviewRecord['media'], requestId: string, mtimeMs = 0, newTask = false, previousTaskId: string | null = null) => request<{ task: ReviewTask }>('/api/tasks/manual', { media, requestId, mtimeMs, newTask, previousTaskId });
 export const claimEditing = (task: ReviewTask, takeover = false) => request<{ editing: boolean; leaseId: string | null }>('/api/clients/claim', { clientId: REVIEW_CLIENT_ID, taskId: task.id, fingerprint: task.media.fingerprint, takeover });
 export const heartbeat = (taskId: string | null, dirty: boolean) => request<{ connected: boolean; primary: boolean; taskStatus: ReviewTask['status'] | null; editing: boolean; leaseId: string | null }>('/api/clients/heartbeat', { clientId: REVIEW_CLIENT_ID, taskId, dirty, visible: !document.hidden }, AbortSignal.timeout(8000));
 export const releaseClient = () => request('/api/clients/release', { clientId: REVIEW_CLIENT_ID });

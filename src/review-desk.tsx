@@ -1,3 +1,9 @@
+import { RepairPanel } from './components/RepairPanel';
+import { VersionPanel } from './components/VersionPanel';
+import { ReadinessPanel } from './components/ReadinessPanel';
+import { ReviewDifference } from './components/ReviewDifference';
+import { useReviewProgress, createHandoffRound, organizeTasks, STATUS_LABEL } from './lib/review-product';
+import './review-product.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App, Alert, Badge, Button, Drawer, Dropdown, Empty, Form, Input, Modal, Popconfirm, Segmented, Select, Slider, Switch, Tag } from 'antd';
 import { ArrowLeftOutlined, AudioOutlined, ClockCircleOutlined, CloseOutlined, CommentOutlined, DeleteOutlined, EditOutlined, FolderOpenOutlined, HomeOutlined, InfoCircleOutlined, PauseOutlined, PlayCircleOutlined, PlusOutlined, SafetyCertificateOutlined, SaveOutlined, ScissorOutlined, SelectOutlined, SoundOutlined, VideoCameraOutlined } from '@ant-design/icons';
@@ -12,11 +18,13 @@ import { ServiceNotice, ServiceRecoveryButton } from './components/ServiceNotice
 import { ReviewHome } from './components/ReviewHome';
 import { ReviewTasks } from './components/ReviewTasks';
 import { WaveData } from './components/WaveData';
+import { useRegionHistory } from './lib/use-region-history';
 import { useReviewTasks } from './lib/use-review-tasks';
 import { useAnalysisLocator } from './lib/use-analysis-locator';
 import { AnalysisActivityNotice } from './components/AnalysisActivityNotice';
 import './review-lifecycle.css';
-import { FrameCanvas } from './components/FrameCanvas';
+import { FrameCanvas, FrameRegions } from './components/FrameCanvas';
+import { VideoPreview } from './components/VideoPreview';
 import { ReviewWaveform } from './components/ReviewWaveform';
 import FrameStrip from './components/FrameStrip';
 import { AudioCompare } from './components/AudioCompare';
@@ -28,16 +36,16 @@ import { useServiceStatus } from './lib/use-service-status';
 import { cacheWorkspace, cachedWorkspace, type ReviewWorkspace } from './lib/review-workspace';
 import { useMediaAnalysis } from './lib/use-media-analysis';
 import { emptyDraft, hasDraftWork, draftProblem, draftSignature, draftToNote, type ReviewDraft, type TargetMode } from './lib/review-draft';
-import { clampMs, fingerprintFile, formatTime, KIND_LABEL, parseTime, REFERENCE_FORMAT, REVIEW_FORMAT, sortedNotes, TOPIC_LABEL, type MediaIdentity, type Rect, type ReviewNote, type ReviewTopic } from './lib/review';
+import { clampMs, fingerprintFile, formatTime, KIND_LABEL, parseTime, REFERENCE_FORMAT, REVIEW_FORMAT, REGIONS_FORMAT, FLOW_FORMAT, COMPLETE_FORMAT, regionsOf, sortedNotes, TOPIC_LABEL, type MediaIdentity, type Rect, type ReviewRecord, type ReviewNote, type ReviewTopic } from './lib/review';
 
 interface OpenMedia { file: File; local: boolean; url: string; isAudio: boolean; identity: MediaIdentity; width: number; height: number }
 type View = { kind: 'new' } | { kind: 'detail'; id: string } | { kind: 'edit'; id: string };
-type Action = { type: 'new' } | { type: 'target'; mode: TargetMode; position: number; cue?: TranscriptCue } | { type: 'detail'; note: ReviewNote } | { type: 'restore' } | { type: 'file'; file: File; task?: ReviewTask; newTask?: boolean; readOnly?: boolean } | { type: 'task'; task: ReviewTask; readOnly?: boolean } | { type: 'suspend' } | { type: 'end' } | { type: 'exit' } | { type: 'finish' };
-const MODE_LABEL = { point: '时间点', range: '时间段', frame: '画面位置' };
+type Action = { type: 'new' } | { type: 'target'; mode: TargetMode; position: number; cue?: TranscriptCue; marker?: boolean } | { type: 'detail'; note: ReviewNote } | { type: 'restore' } | { type: 'file'; file: File; task?: ReviewTask; newTask?: boolean; readOnly?: boolean } | { type: 'task'; task: ReviewTask; readOnly?: boolean } | { type: 'suspend' } | { type: 'end' } | { type: 'exit' } | { type: 'finish' };
+const MODE_LABEL = { point: '时间点', range: '时间段', frame: '画面位置', whole: '整片意见' };
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 function fromNote(note: ReviewNote): ReviewDraft {
-  return { id: note.id, mode: note.endMs !== null ? 'range' : note.reference && note.rect ? 'frame' : 'point', kind: note.kind, topic: note.topic ?? null,
-    startText: formatTime(note.startMs), endText: note.endMs === null ? '' : formatTime(note.endMs), text: note.text, rect: note.rect,
+  return { id: note.id, mode: note.scope === 'whole' ? 'whole' : note.endMs !== null ? 'range' : note.reference && regionsOf(note).length ? 'frame' : 'point', kind: note.kind, topic: note.topic ?? null,
+    startText: note.startMs === null ? '' : formatTime(note.startMs), endText: note.endMs === null ? '' : formatTime(note.endMs), text: note.text, regions: regionsOf(note), ...(note.regionSerial !== undefined ? { regionSerial: note.regionSerial } : {}),
     frameMs: note.reference?.frameMs ?? null, reference: note.reference ?? null, snapshot: null };
 }
 
@@ -51,6 +59,8 @@ export function ReviewDesk() {
   const [screen, setScreen] = useState<'home' | 'review'>('home');
   const [notes, setNotes] = useState<ReviewNote[]>([]), [dirty, setDirty] = useState(false);
   const [newDraft, setNewDraft] = useState(emptyDraft), [editDraft, setEditDraft] = useState(emptyDraft), [parked, setParked] = useState<ReviewDraft[]>([]);
+  const [completion, setCompletion] = useState<ReviewRecord['completion']>(null);
+  const [deletedNotes, setDeletedNotes] = useState<ReviewNote[]>([]);
   const [view, setView] = useState<View>({ kind: 'new' });
   const [pending, setPending] = useState<Action | null>(null), [busy, setBusy] = useState<'opening' | 'loading' | 'saving' | null>(null);
   const [selecting, setSelecting] = useState<'range' | 'frame' | null>(null), [capturing, setCapturing] = useState(false);
@@ -63,6 +73,11 @@ export function ReviewDesk() {
   const [handoff, setHandoff] = useState<ReviewHandoff | null>(null), [handoffOpen, setHandoffOpen] = useState(false);
   const [copied, setCopied] = useState(false), [copying, setCopying] = useState(false), [copyError, setCopyError] = useState('');
   const [reduced, setReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [versionOpen, setVersionOpen] = useState(false), [readinessOpen, setReadinessOpen] = useState(false);
+  const [noteQuery, setNoteQuery] = useState(''), [topicFilter, setTopicFilter] = useState(''), [progressFilter, setProgressFilter] = useState('');
+  const [selectedRegion, setSelectedRegion] = useState<number | null>(null), [contextPad, setContextPad] = useState(1000), [fineStep, setFineStep] = useState(40);
+  const [importedCues, setImportedCues] = useState<TranscriptCue[] | null>(null);
+  const manualParent = useRef<string | null>(null);
   const [captureCount, setCaptureCount] = useState(0);
   const service = useServiceStatus();
   const [launcher, setLauncher] = useState<NativeLauncher | null>(null);
@@ -99,7 +114,7 @@ export function ReviewDesk() {
   const [activeTask, setActiveTask] = useState<ReviewTask | null>(null), [editing, setEditing] = useState(false), [tasksOpen, setTasksOpen] = useState(false);
   const [recordRevision, setRecordRevision] = useState<string | null>(null), [primary, setPrimary] = useState(false);
   const [frameIndexOpen, setFrameIndexOpen] = useState(false), [compareOpen, setCompareOpen] = useState(false), [visible, setVisible] = useState(!document.hidden);
-  const [conflict, setConflict] = useState<{ latest: Awaited<ReturnType<typeof loadRecord>>; finish: boolean; allDrafts: boolean } | null>(null);
+  const [conflict, setConflict] = useState<{ latest: Awaited<ReturnType<typeof loadRecord>>; finish: boolean; allDrafts: boolean; proposed: ReviewNote[] } | null>(null);
   const manualRequest = useRef({ generation: -1, id: '' });
   const chosenNewTask = useRef(false), chosenReadOnly = useRef(false), manualNewTask = useRef(false);
   const chosenManualTask = useRef<ReviewTask | null>(null), initialPick = useRef(false), manualRegistration = useRef('');
@@ -112,24 +127,34 @@ export function ReviewDesk() {
   const durationMs = media?.identity.durationMs ?? 0;
   const presentation = useVideoPresentation(videoSurface, screen === 'review' && !!media && !media.isAudio && !listenOnly, text => message.info(text));
   const analysis = useMediaAnalysis(media?.file ?? null, durationMs, editing && !!activeTask && service.state === 'online' && screen === 'review', activeTask && media?.local ? { ...activeTask, manual: true } : activeTask);
-  const ordered = useMemo(() => sortedNotes(notes), [notes]);
+  const progress = useReviewProgress(activeTask?.id, service.state === 'online', recordRevision);
+  const ordered = useMemo(() => sortedNotes(notes).filter(note => (!noteQuery || [note.text, ...regionsOf(note).map(region => region.text ?? ''), progress.bundle?.statuses[note.id]?.latest?.text ?? ''].join(' ').toLocaleLowerCase().includes(noteQuery.toLocaleLowerCase())) && (!topicFilter || note.topic === topicFilter) && (!progressFilter || (progress.bundle?.statuses[note.id]?.status ?? (note.kind === 'discuss' ? 'clarify' : 'pending')) === progressFilter)), [notes, noteQuery, topicFilter, progressFilter, progress.bundle]);
+  function focusRegion(id: number) { setSelectedRegion(id); setTimeout(() => root.current?.querySelector<HTMLElement>(`[data-region-comment="${id}"]`)?.scrollIntoView({ block: 'nearest' }), 0); }
+  function nextIssue() { if (!ordered.length) return; const index = ordered.findIndex(note => view.kind !== 'new' && note.id === view.id); showNote(ordered[(index + 1) % ordered.length]); }
+  useEffect(() => { setSelectedRegion(null); }, [view.kind, view.kind === 'new' ? '' : view.id]);
+  useEffect(() => { setNoteQuery(''); setTopicFilter(''); setProgressFilter(''); setImportedCues(null); if (activeTask) void organizeTasks([activeTask.id], 'opened').catch(() => {}); }, [activeTask?.id]);
   const selected = view.kind !== 'new' ? notes.find(note => note.id === view.id) : null;
   const draft = view.kind === 'detail' && selected ? fromNote(selected) : view.kind === 'edit' ? editDraft : newDraft;
   const reading = view.kind === 'detail';
+  const regions = regionsOf(draft);
+  const regionHistory = useRegionHistory(`${activeTask?.id}:${view.kind}:${draft.id}:${draft.frameMs}`);
+  useEffect(() => { setDeletedNotes([]); setCompletion(null); }, [media?.url]);
   const editChanged = view.kind === 'edit' && !!selected && draftSignature(editDraft) !== draftSignature(fromNote(selected));
   const unsaved = dirty || hasDraftWork(newDraft) || editChanged || parked.some(hasDraftWork);
   const locked = !!busy || capturing || !!recordError || !!recoveryConflict || !!serviceError || !durationMs || !editing || !activeTask;
   const problem = draftProblem(draft, durationMs, !!selecting || capturing);
+  const referenceAspect = draft.reference ? draft.reference.width / draft.reference.height : media ? media.width / media.height : 1;
   const targetImage = draft.snapshot ?? (draft.reference ? images[draft.reference.fileName] : null);
   const span = durationMs / zoom, viewEnd = Math.min(durationMs, viewStart + span);
   const start = parseTime(draft.startText), end = parseTime(draft.endText);
   const selection = draft.mode === 'range' && start !== null && end !== null && end > start && end <= durationMs ? { start, end } : null;
+  const pendingRange = !reading && draft.mode === 'range' && start !== null && !draft.endText;
   const targetTime = draft.frameMs ?? start;
   const atReference = draft.frameMs !== null && Math.abs(currentMs - draft.frameMs) < 80;
   const stateLabel = busy === 'saving' ? '正在保存到本机…' : recordError ? '旧记录保留，读取待重试' : unsaved ? '有未保存的意见' : saved ? '已保存到本机' : '尚未保存';
-  const activeCue = analysis.cues.find(cue => cue.startMs <= currentMs && currentMs < cue.endMs);
+  const activeCue = (importedCues ?? analysis.cues).find(cue => cue.startMs <= currentMs && currentMs < cue.endMs);
   const activity = useRef({ media, activeTask, busy, unsaved, editing, workspace: null as ReviewWorkspace | null });
-  activity.current = { media, activeTask, busy, unsaved, editing, workspace: media && durationMs ? { format: 'media-review-workspace/v1', media: media.identity, currentMs: clampMs(Math.round((player.current?.currentTime ?? currentMs / 1000) * 1000), durationMs), notes, baseNotes, dirty, newDraft, editDraft, parked, view } : null };
+  activity.current = { media, activeTask, busy, unsaved, editing, workspace: media && durationMs ? { format: 'media-review-workspace/v4', media: media.identity, currentMs: clampMs(Math.round((player.current?.currentTime ?? currentMs / 1000) * 1000), durationMs), notes, baseNotes, dirty, newDraft, editDraft, parked, view } : null };
 
   const analysisLocator = useAnalysisLocator(service.state === 'online', service.dataId, service.runtimeId, activeTask?.id ?? null, () => {
     if (!activity.current.media) return;
@@ -164,10 +189,36 @@ export function ReviewDesk() {
   const invalidate = useCallback(() => {
     copySequence.current++; setHandoff(null); setHandoffOpen(false); setCopied(false); setCopyError(''); setCopying(false); setFeedback(''); setSaved(false);
   }, []);
-  function patch(change: Partial<ReviewDraft>) {
+  function patch(change: Partial<ReviewDraft>, remember = true) {
     if (locked || reading) return;
     invalidate();
-    if (view.kind === 'edit') setEditDraft(old => ({ ...old, ...change })); else setNewDraft(old => ({ ...old, ...change }));
+    if (change.regions && remember) regionHistory.remember(regions, change.regions);
+    const update = (old: ReviewDraft) => {
+      const next = { ...old, ...change };
+      if (change.regions) {
+        delete next.rect;
+        next.regionSerial = Math.max(old.regionSerial ?? 0, ...regionsOf(old).map(item => item.id), ...change.regions.map(item => item.id));
+        if (!change.regions.length && next.mode === 'frame') next.mode = 'point';
+      }
+      return next;
+    };
+    if (view.kind === 'edit') setEditDraft(update); else setNewDraft(update);
+  }
+  function undoRegion(redo = false) {
+    if (locked || reading) return;
+    const value = regionHistory.take(regions, redo); if (value) patch({ regions: value }, false);
+  }
+  function removeNote(note: ReviewNote) {
+    setDeletedNotes(old => [...old, note].slice(-30));
+    setNotes(old => old.filter(item => item.id !== note.id));
+    if (view.kind === 'edit') setEditDraft(emptyDraft());
+    setView({ kind: 'new' }); setDirty(true); invalidate();
+  }
+  function undoNoteDeletion() {
+    if (locked || !deletedNotes.length) return;
+    const note = deletedNotes[deletedNotes.length - 1];
+    setNotes(old => old.some(item => item.id === note.id) ? old : sortedNotes([...old, note]));
+    setDeletedNotes(old => old.slice(0, -1)); setDirty(true); invalidate();
   }
   function focusOpinion() {
     if (presentation.expanded || presentation.fullscreen) { void presentation.leave().then(() => requestAnimationFrame(focusOpinionInput)); return; }
@@ -198,7 +249,7 @@ export function ReviewDesk() {
     const element = event.currentTarget;
     let time = clampMs(Math.round(element.currentTime * 1000), durationMs);
     if (auditionEnd.current !== null && time >= auditionEnd.current) { time = auditionEnd.current; auditionEnd.current = null; element.pause(); element.currentTime = time / 1000; }
-    if (loop && selection && time >= selection.end - 30) { time = selection.start; element.currentTime = time / 1000; }
+    if (loop && selection && time >= Math.min(durationMs, selection.end + contextPad) - 30) { time = Math.max(0, selection.start - contextPad); element.currentTime = time / 1000; }
     setCurrentMs(time);
     if (zoom > 1 && time > viewEnd) setViewStart(Math.min(durationMs - span, Math.max(0, time - span * .2)));
   }
@@ -211,9 +262,10 @@ export function ReviewDesk() {
       const result = await loadRecord(media.identity.fingerprint, context);
       if (cancelled || number !== generation.current) return;
       const record = result.record;
-      if (result.found && record && (![REVIEW_FORMAT, REFERENCE_FORMAT].includes(record.format) || record.media.fingerprint !== media.identity.fingerprint || record.media.size !== media.identity.size || record.media.name !== media.identity.name || Math.abs(record.media.durationMs - durationMs) > 1000)) throw new Error('找到记录但媒体身份不匹配，原意见未加载或覆盖。');
+      if (result.found && record && (![REVIEW_FORMAT, REFERENCE_FORMAT, REGIONS_FORMAT, FLOW_FORMAT, COMPLETE_FORMAT].includes(record.format) || record.media.fingerprint !== media.identity.fingerprint || record.media.size !== media.identity.size || record.media.name !== media.identity.name || Math.abs(record.media.durationMs - durationMs) > 1000)) throw new Error('找到记录但媒体身份不匹配，原意见未加载或覆盖。');
       const original = record?.notes ?? [];
-      setNotes(original); setBaseNotes(original); setRecordRevision(result.revision); setRecordPath(result.recordPath); setSaved(!!record);
+      setNotes(original); setBaseNotes(original); setRecordRevision(result.revision); setRecordPath(result.recordPath); setSaved(!!record); setCompletion(record?.completion ?? null);
+      if (record?.completion && result.recordPath && editing && result.revision) { const round = await createHandoffRound(activeTask.id, result.revision).catch(() => null); if (round && !cancelled) setHandoff(createReviewHandoff({ saved: true, fileName: media.identity.fingerprint + '.review.json', recordPath: round.recordPath, record, savedAt: record.completion.completedAt, revision: result.revision }, round)); }
       if (!editing) return;
       const [disk, local, legacy] = await Promise.all([
         loadWorkspace(media.identity.fingerprint, context).catch(() => { setRecoveryStatus('本机恢复资料暂不可读，原内容保留'); return { workspace: null, at: 0 }; }),
@@ -241,7 +293,7 @@ export function ReviewDesk() {
     if (!media || !durationMs || activeTask || service.state !== 'online' || manualRegistration.current === String(generation.current)) return;
     const number = generation.current; manualRegistration.current = String(number);
     if (manualRequest.current.generation !== number) manualRequest.current = { generation: number, id: crypto.randomUUID() };
-    void registerManualTask(media.identity, manualRequest.current.id, media.file.lastModified, manualNewTask.current).then(async ({ task }) => {
+    void registerManualTask(media.identity, manualRequest.current.id, media.file.lastModified, manualNewTask.current, manualParent.current).then(async ({ task }) => {
       if (number !== generation.current) return;
       const lease = await claimEditing(task);
       if (number !== generation.current) return;
@@ -357,7 +409,8 @@ export function ReviewDesk() {
       initialPick.current = true; setTasksOpen(false); navigate('review');
     } catch (cause) { message.error(cause instanceof Error ? cause.message : '素材无法读取。'); setBusy(null); }
   }
-  function chooseFile(kind?: 'video' | 'audio', task: ReviewTask | null = null, newTask = false, readOnly = false) {
+  function chooseFile(kind?: 'video' | 'audio', task: ReviewTask | null = null, newTask = false, readOnly = false, previousTaskId: string | null = null) {
+    manualParent.current = previousTaskId;
     if (serviceError) { message.error(serviceError); return; }
     if (busy === 'saving' || !fileInput.current) return;
     chosenManualTask.current = task; chosenNewTask.current = newTask; chosenReadOnly.current = readOnly;
@@ -373,11 +426,19 @@ export function ReviewDesk() {
   }
   function cancelSelection() {
     captureSequence.current++; setCapturing(false); setSelecting(null);
-    if (gestureBackup.current) { if (view.kind === 'edit') setEditDraft(gestureBackup.current); else setNewDraft(gestureBackup.current); }
-    gestureBackup.current = null;
+    const previous = gestureBackup.current;
+    if (previous) {
+      const restoreTarget = (current: ReviewDraft) => {
+        if (selecting === 'range') return { ...current, mode: previous.mode, startText: previous.startText, endText: previous.endText };
+        const { rect: _rect, ...kept } = current;
+        return { ...kept, regions: regionsOf(previous), frameMs: previous.frameMs, reference: previous.reference, snapshot: previous.snapshot };
+      };
+      if (view.kind === 'edit') setEditDraft(restoreTarget); else setNewDraft(restoreTarget);
+    }
+    gestureBackup.current = null; regionHistory.clear();
   }
   async function openTask(task: ReviewTask, readOnly = false) {
-    if (task.status !== 'waiting') { setRecoveryStatus('此任务已结束或属于尚未选择的旧交接。请在任务列表明确重开／继续，未自动改变状态。'); tasks.setClosed(true); setTasksOpen(true); return; }
+    if (task.status !== 'waiting' && !readOnly) { setRecoveryStatus('此任务已结束或属于尚未选择的旧交接。请在任务列表明确重开／继续，未自动改变状态。'); tasks.setClosed(true); setTasksOpen(true); return; }
     if (activity.current.activeTask?.id === task.id && activity.current.media) { setTasksOpen(false); navigate('review'); return; }
     if (task.manual) { chooseFile(undefined, task, false, readOnly); return; }
     const number = ++generation.current;
@@ -456,7 +517,7 @@ export function ReviewDesk() {
     if (action.type === 'finish') { void save(true); return; }
     if (action.type === 'detail') {
       setSelecting(null); setView({ kind: 'detail', id: action.note.id }); setEditDraft(emptyDraft());
-      player.current?.pause(); seek(action.note.reference?.frameMs ?? action.note.startMs); return;
+      player.current?.pause(); const position = action.note.reference?.frameMs ?? action.note.startMs; if (position !== null) seek(position); return;
     }
     if (action.type === 'restore') {
       setView({ kind: 'new' }); setEditDraft(emptyDraft()); setSelecting(null);
@@ -467,9 +528,11 @@ export function ReviewDesk() {
       focusOpinion(); return;
     }
     setSelecting(null); setView({ kind: 'new' }); setEditDraft(emptyDraft());
-    if (action.type === 'new') { setNewDraft(emptyDraft()); focusOpinion(); return; }
-    const value: ReviewDraft = { ...(!newDraft.mode && hasDraftWork(newDraft) ? newDraft : emptyDraft()), mode: action.mode, startText: formatTime(action.cue?.startMs ?? action.position), endText: action.cue ? formatTime(action.cue.endMs) : '', frameMs: action.mode === 'frame' ? action.position : null };
-    setNewDraft(value); invalidate(); setCurrentMs(action.position); player.current?.pause();
+    if (action.type === 'new') { regionHistory.clear(); setNewDraft(emptyDraft()); focusOpinion(); return; }
+    const value: ReviewDraft = { ...(!newDraft.mode && hasDraftWork(newDraft) ? newDraft : emptyDraft()), mode: action.mode, startText: action.mode === 'whole' ? '' : formatTime(action.cue?.startMs ?? action.position), endText: action.cue ? formatTime(action.cue.endMs) : '', frameMs: action.mode === 'frame' ? action.position : null };
+    setNewDraft(value); invalidate();
+    if (action.marker) return; // A start mark must not stop playback or move focus.
+    setCurrentMs(action.position); player.current?.pause();
     if (action.mode === 'range') { gestureBackup.current = value; setSelecting(action.cue ? null : 'range'); if (action.cue) seek(action.cue.startMs); else root.current?.querySelector('.sound-panel')?.scrollIntoView({ block: 'nearest', behavior: 'instant' }); }
     if (action.mode === 'frame') { setListenOnly(false); gestureBackup.current = value; setSelecting('frame'); void captureFrame(action.position, value); }
     if (action.mode !== 'frame') focusOpinion();
@@ -486,13 +549,52 @@ export function ReviewDesk() {
   }
   function requestTarget(mode: TargetMode, cue?: TranscriptCue) {
     if (locked || (mode === 'frame' && media?.isAudio)) return;
+    if (!reading && (mode === 'whole' || mode === 'point' && draft.mode === 'whole')) {
+      setSelecting(null); player.current?.pause();
+      patch({ mode, startText: mode === 'whole' ? '' : formatTime(actualTime()), endText: '' });
+      focusOpinion(); return;
+    }
+    if (!reading && draft.mode && mode === 'frame') { beginFrameSelection(); return; }
+    if (!reading && draft.mode && mode === 'range') {
+      gestureBackup.current = draft; player.current?.pause(); setSelecting('range');
+      patch({ mode: 'range', ...(cue ? { startText: formatTime(cue.startMs), endText: formatTime(cue.endMs) } : {}) });
+      if (cue) { setSelecting(null); gestureBackup.current = null; seek(cue.startMs); focusOpinion(); }
+      return;
+    }
     const position = actualTime(); player.current?.pause();
     request({ type: 'target', mode, position, cue });
+  }
+  function markRangeBoundary() {
+    if (locked || service.state !== 'online') return;
+    const position = actualTime();
+    if (pendingRange) {
+      if (position <= start!) { setFeedback('终点须晚于起点，请继续播放或向后定位。'); return; }
+      patch({ endText: formatTime(position) }); setSelecting(null); gestureBackup.current = null;
+      player.current?.pause(); focusOpinion(); return;
+    }
+    if (!reading && draft.mode) {
+      patch({ mode: 'range', startText: formatTime(position), endText: '' });
+      setSelecting(null); setLoop(false); gestureBackup.current = null; return;
+    }
+    request({ type: 'target', mode: 'range', position, marker: true });
+  }
+  function beginFrameSelection() {
+    if (locked || media?.isAudio || reading) return;
+    if (regions.length >= 50) { setFeedback('一帧最多标记50处，请将其余问题另存一条意见。'); return; }
+    const position = regions.length && draft.frameMs !== null ? draft.frameMs : actualTime();
+    player.current?.pause(); gestureBackup.current = draft;
+    if (Math.abs(actualTime() - position) >= 80) seek(position);
+    setListenOnly(false); setSelecting('frame');
+    if (draft.frameMs === position && (draft.snapshot || draft.reference)) return;
+    void captureFrame(position, draft, view.kind === 'edit');
+  }
+  function finishFrameSelection() {
+    setSelecting(null); gestureBackup.current = null; focusOpinion();
   }
   function showNote(note: ReviewNote) { request({ type: 'detail', note }); }
   function discardCurrent() {
     if (view.kind === 'edit') setEditDraft(emptyDraft()); else setNewDraft(emptyDraft());
-    setSelecting(null); captureSequence.current++; setCapturing(false); setFeedback('');
+    setSelecting(null); captureSequence.current++; setCapturing(false); setFeedback(''); regionHistory.clear();
   }
 
   async function save(finish = false, discardIncomplete = false, allDrafts = false, overrideRevision?: string | null): Promise<boolean> {
@@ -507,7 +609,7 @@ export function ReviewDesk() {
       return false;
     }
     if (discardIncomplete) drafts = drafts.filter(value => !draftProblem(value, durationMs, value === draft && (!!selecting || capturing)));
-    if (finish && !notes.length && !drafts.length) { setFeedback('还没有可交接的意见。先留下至少一条意见。'); return false; }
+    let attemptedNotes = notes;
     savingRef.current = true; setBusy('saving'); setFeedback(''); message.destroy();
     try {
       let updated = notes;
@@ -517,10 +619,12 @@ export function ReviewDesk() {
         const note = draftToNote({ ...value, reference }, durationMs);
         updated = sortedNotes([...updated.filter(item => item.id !== note.id), note]);
       }
-      const receipt = await saveRecord({ format: REFERENCE_FORMAT, media: media.identity, notes: updated }, overrideRevision === undefined ? recordRevision : overrideRevision, context);
+      attemptedNotes = updated;
+      const nextCompletion = finish ? { outcome: updated.length ? 'with-notes' as const : 'no-changes' as const, completedAt: new Date().toISOString() } : unsaved ? null : completion;
+      const receipt = await saveRecord({ format: COMPLETE_FORMAT, media: media.identity, notes: updated, completion: nextCompletion }, overrideRevision === undefined ? recordRevision : overrideRevision, context);
       if (number !== generation.current) return false;
       const remainingDrafts = finish || allDrafts ? [] : view.kind === 'edit' && hasDraftWork(newDraft) ? [...parked, newDraft] : parked;
-      const cleared: ReviewWorkspace = { format: 'media-review-workspace/v1', media: media.identity, currentMs: actualTime(), notes: receipt.record.notes, baseNotes: receipt.record.notes, dirty: false, newDraft: emptyDraft(), editDraft: emptyDraft(), parked: remainingDrafts, view: { kind: 'new' } };
+      const cleared: ReviewWorkspace = { format: 'media-review-workspace/v4', media: media.identity, currentMs: actualTime(), notes: receipt.record.notes, baseNotes: receipt.record.notes, dirty: false, newDraft: emptyDraft(), editDraft: emptyDraft(), parked: remainingDrafts, view: { kind: 'new' } };
       workspaceTail.current = workspaceTail.current.catch(() => {}).then(async () => {
         const outcomes = await Promise.allSettled([cacheWorkspace(service.dataId, cleared, context), saveWorkspace(cleared, context)]);
         if (outcomes.every(result => result.status === 'rejected')) setRecoveryStatus('正式意见已保存，但恢复副本清理未确认；请保留本页');
@@ -531,7 +635,9 @@ export function ReviewDesk() {
       setParked(remainingDrafts);
       setNotes(receipt.record.notes); setBaseNotes(receipt.record.notes); setRecordRevision(receipt.revision ?? null); setConflict(null); setRecordPath(receipt.recordPath); setDirty(false);
       setNewDraft(emptyDraft()); setEditDraft(emptyDraft()); setView({ kind: 'new' }); setSelecting(null); setSaved(true);
-      setHandoff(receipt.record.notes.length ? createReviewHandoff(receipt) : null); setHandoffOpen(finish); setCopied(false); setCopyError(''); setPending(null);
+      setCompletion(receipt.record.completion ?? null); regionHistory.clear();
+      setHandoff(null); setHandoffOpen(false);
+      if (finish && receipt.revision) { try { const round = await createHandoffRound(activeTask.id, receipt.revision); setHandoff(createReviewHandoff({ ...receipt, recordPath: round.recordPath }, round)); setHandoffOpen(true); } catch (cause) { setFeedback('意见已保存，但固定交接未完成：' + (cause instanceof Error ? cause.message : '请重试完成审阅')); } } setCopied(false); setCopyError(''); setPending(null);
       if (!finish) { message.success('已保存到本机，可以继续写下一条。'); focusOpinion(); }
       return true;
     } catch (cause) {
@@ -539,7 +645,7 @@ export function ReviewDesk() {
         setFeedback(cause instanceof Error ? cause.message : '保存未确认，输入仍保留，可以重试。');
         if (cause instanceof ReviewAPIError && cause.code === 'edit_lease_lost') setEditing(false);
         if (cause instanceof ReviewAPIError && cause.code === 'review_conflict') {
-          try { const latest = await loadRecord(media.identity.fingerprint, context); if (number === generation.current) setConflict({ latest, finish, allDrafts }); } catch { /* 读回失败时不改变基线或输入。 */ }
+          try { const latest = await loadRecord(media.identity.fingerprint, context); if (number === generation.current) setConflict({ latest, finish, allDrafts, proposed: attemptedNotes }); } catch { /* 读回失败时不改变基线或输入。 */ }
         }
       }
       return false;
@@ -561,8 +667,9 @@ export function ReviewDesk() {
     }
     setPending(null);
     if (action.type === 'target') {
-      const value: ReviewDraft = { ...emptyDraft(), mode: action.mode, startText: formatTime(action.cue?.startMs ?? action.position), endText: action.cue ? formatTime(action.cue.endMs) : '', frameMs: action.mode === 'frame' ? action.position : null };
+      const value: ReviewDraft = { ...emptyDraft(), mode: action.mode, startText: action.mode === 'whole' ? '' : formatTime(action.cue?.startMs ?? action.position), endText: action.cue ? formatTime(action.cue.endMs) : '', frameMs: action.mode === 'frame' ? action.position : null };
       setNewDraft(value); setView({ kind: 'new' }); setEditDraft(emptyDraft()); invalidate();
+      if (action.marker) { setSelecting(null); return; }
       if (action.mode === 'frame') { setListenOnly(false); gestureBackup.current = value; setSelecting('frame'); void captureFrame(action.position, value); }
       else if (action.mode === 'range') { gestureBackup.current = value; setSelecting(action.cue ? null : 'range'); if (action.cue) seek(action.cue.startMs); }
       else setSelecting(null);
@@ -582,7 +689,7 @@ export function ReviewDesk() {
   }
   function playRange() {
     if (!selection || !player.current) return;
-    seek(selection.start); auditionEnd.current = loop ? null : selection.end; void player.current.play().catch(() => setMediaError('当前选段暂不能播放。'));
+    seek(Math.max(0, selection.start - contextPad)); auditionEnd.current = loop ? null : Math.min(durationMs, selection.end + contextPad); void player.current.play().catch(() => setMediaError('当前选段暂不能播放。'));
   }
   useEffect(() => {
     const wave = root.current?.querySelector<HTMLElement>('.waveform');
@@ -601,11 +708,19 @@ export function ReviewDesk() {
   }, [screen, media?.url, durationMs, viewStart, span, zoom, selecting, locked]);
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
-      if (screen !== 'review' || pending || handoffOpen || referenceOpen || event.defaultPrevented) return;
+      if (screen !== 'review' || pending || handoffOpen || referenceOpen || versionOpen || readinessOpen || tasksOpen || conflict || recoveryCompare || event.defaultPrevented) return;
       if (event.key === 'Escape' && selecting) { event.preventDefault(); cancelSelection(); return; }
-      if ((event.target as HTMLElement)?.closest('input,textarea,button,[role="slider"],[role="combobox"],[role="radio"],.ant-modal,[contenteditable]')) return;
+      if ((event.target as HTMLElement)?.closest('input,textarea,.ant-modal,[contenteditable]')) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !reading) { event.preventDefault(); undoRegion(event.shiftKey); return; }
+      if ((event.target as HTMLElement)?.closest('button,[role="slider"],[role="combobox"],[role="radio"]')) return;
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.repeat && !locked && !reading) {
+        if (event.key.toLowerCase() === 'i') { event.preventDefault(); if (pendingRange) patch({ startText: formatTime(actualTime()) }); else markRangeBoundary(); }
+        if (event.key.toLowerCase() === 'o') { event.preventDefault(); if (pendingRange) markRangeBoundary(); else setFeedback('先按 I 或点击标记起点'); }
+      }
+      if (event.key === ',' || event.key === '.') { event.preventDefault(); player.current?.pause(); seek(actualTime() + (event.key === ',' ? -fineStep : fineStep)); }
+      if (event.key.toLowerCase() === 'n' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); nextIssue(); }
       if (event.code === 'Space') { event.preventDefault(); void togglePlay(); }
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); seek(actualTime() + (event.key === 'ArrowLeft' ? -1000 : 1000)); }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); seek(actualTime() + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? fineStep : 1000)); }
     };
     window.addEventListener('keydown', keyboard); return () => window.removeEventListener('keydown', keyboard);
   });
@@ -680,6 +795,7 @@ export function ReviewDesk() {
         invalidate();
       }
       setRecoveryConflict(null); setRecoveryCompare(false); setRecoveryStatus(useOld ? '已从旧副本继续编辑，尚未保存；原副本另存于drafts/archive。' : '继续使用正式意见；旧恢复副本已另存于drafts/archive。');
+      return true;
     } catch (cause) { message.error(cause instanceof Error ? cause.message : '恢复选择未确认，两个版本保留'); }
     finally { savingRef.current = false; if (number === generation.current) setBusy(null); }
   }
@@ -694,7 +810,7 @@ export function ReviewDesk() {
   useEffect(() => {
     if (!media || !durationMs || !activeTask || busy || restoring.current || recordError || recoveryConflict || !service.dataId || !editing && !unsaved) return;
     const context = reviewContext();
-    const workspace: ReviewWorkspace = { format: 'media-review-workspace/v1', media: media.identity, currentMs: actualTime(), notes, baseNotes, dirty, newDraft, editDraft, parked, view };
+    const workspace: ReviewWorkspace = { format: 'media-review-workspace/v4', media: media.identity, currentMs: actualTime(), notes, baseNotes, dirty, newDraft, editDraft, parked, view };
     let cancelled = false;
     setRecoveryStatus('正在保留恢复副本…');
     const timer = setTimeout(() => {
@@ -712,54 +828,62 @@ export function ReviewDesk() {
 
   const reference = <div className="note-target">
     {targetImage ? <Button className="target-preview" type="text" aria-label="放大查看这条意见的参考画面" onClick={() => { player.current?.pause(); setReferenceOpen(true); }}>
-      <span className="target-frame" style={{ aspectRatio: draft.reference ? `${draft.reference.width}/${draft.reference.height}` : `${media?.width}/${media?.height}` }}><img src={targetImage} alt="这条意见的完整参考画面" />{draft.rect && <span className="thumb-rect" style={{ left: `${draft.rect.x * 100}%`, top: `${draft.rect.y * 100}%`, width: `${draft.rect.width * 100}%`, height: `${draft.rect.height * 100}%` }} />}</span>
+      <span className="target-frame" style={{ width: Math.min(59, 77 * referenceAspect), height: Math.min(77, 59 / referenceAspect) }}><img src={targetImage} alt="这条意见的完整参考画面" /><FrameRegions regions={regions} selected={selectedRegion} /></span>
     </Button> : <div className="target-empty">{draft.mode === 'range' ? <ScissorOutlined /> : draft.mode === 'frame' ? <SelectOutlined /> : <ClockCircleOutlined />}</div>}
-    <div className="target-text"><small>{draft.mode ? `本条意见 · ${MODE_LABEL[draft.mode]}` : '这条意见针对哪里？'}</small><strong>{draft.mode === 'range' ? `${draft.startText || '待选开始'} — ${draft.endText || '待选结束'}` : draft.startText || '先选一个位置'}</strong>
-      <p>{draft.frameMs !== null ? `参考帧 ${formatTime(draft.frameMs)} · 与播放位置独立` : reading && draft.rect ? '旧记录未记录独立参考帧，未猜补截图' : '播放、点击台词不会改变意见目标'}</p>
+    <div className="target-text"><small>{draft.mode ? `本条意见 · ${MODE_LABEL[draft.mode]}` : '这条意见针对哪里？'}</small><strong>{draft.mode === 'whole' ? '整份作品' : draft.mode === 'range' ? `${draft.startText || '待选开始'} — ${draft.endText || '待选结束'}` : draft.startText || '先选一个位置'}</strong>
+      <p>{draft.frameMs !== null ? `参考帧 ${formatTime(draft.frameMs)}` : reading && regions.length ? '旧记录未记录独立参考帧，未猜补截图' : '播放、点击台词不会改变意见目标'}</p>
       {targetTime !== null && <Button type="link" size="small" onClick={() => { player.current?.pause(); seek(targetTime); }}>返回标注位置</Button>}
       {!reading && draft.mode === 'range' && <Button type="link" size="small" disabled={locked || service.state !== 'online'} onClick={() => { gestureBackup.current = draft; setSelecting('range'); }}>调整这段时间</Button>}
-      {!reading && draft.mode === 'range' && !media?.isAudio && <Button type="link" size="small" disabled={locked || service.state !== 'online'} onClick={() => { const position = actualTime(); player.current?.pause(); gestureBackup.current = draft; setSelecting('frame'); void captureFrame(position, draft, view.kind === 'edit'); }}>给这段附加参考画面</Button>}
-      {!reading && draft.mode === 'frame' && !selecting && !draft.rect && <Button type="link" size="small" disabled={locked || service.state !== 'online'} onClick={() => { const position = draft.frameMs ?? actualTime(); player.current?.pause(); seek(position); gestureBackup.current = draft; setSelecting('frame'); void captureFrame(position, draft, view.kind === 'edit'); }}>继续框选这条意见</Button>}
+      {regions.length > 0 && <p>画面框：{regions.map(region => region.id).join('、')} · 按编号写意见</p>}
     </div>
   </div>;
   const composition = <section className="opinion" aria-label="常驻意见栏">
     <div className="opinion-head"><h2>{reading ? '意见详情' : view.kind === 'edit' ? '修改这条意见' : '写下这条意见'}</h2><Tag>{reading ? KIND_LABEL[draft.kind] : view.kind === 'edit' ? '正在编辑' : '新意见'}</Tag></div>
     <p className="opinion-instruction">{reading ? '已定位这条意见；查看不会覆盖你的新草稿。' : '先写想法也可以，再选位置。目标不会随播放变化。'}</p>
+    {!reading && <Button className="whole-comment" size="small" type={draft.mode === 'whole' ? 'primary' : 'default'} disabled={locked} onClick={() => requestTarget('whole')}>整片意见 · 不限时间</Button>}
     {reference}{imageError && <p className="save-error" role="alert">{imageError}</p>}
     {reading ? <><div className="note-read-text">{draft.text}</div>{draft.topic && <p className="note-safe">问题类别：{TOPIC_LABEL[draft.topic]}</p>}
       <div className="note-footer"><Button type="primary" icon={<EditOutlined />} disabled={locked || service.state !== 'online'} onClick={() => { if (!selected) return; setEditDraft(fromNote(selected)); setView({ kind: 'edit', id: selected.id }); setFeedback(''); focusOpinion(); }}>修改这条意见</Button>
         {(hasDraftWork(newDraft) || parked.length > 0) && <Button onClick={() => request({ type: 'restore' })}>返回未保存草稿</Button>}</div></> : <Form layout="vertical" onFinish={() => void save()} disabled={locked}>
       <Form.Item className="kind-field" label="意见类型"><Segmented block aria-label="意见类型" value={draft.kind} options={Object.entries(KIND_LABEL).map(([value, label]) => ({ value, label }))} onChange={value => patch({ kind: value as ReviewDraft['kind'] })} /></Form.Item>
-      <details className="note-options"><summary>调整时间／选择问题类别</summary><div className="time-input-row"><Form.Item label={draft.mode === 'range' ? '开始时间' : '标注时间'}><Input aria-label="开始时间" value={draft.startText} placeholder="00:00.000" disabled={!draft.mode || draft.mode === 'frame' || locked} onChange={event => patch({ startText: event.target.value })} /></Form.Item>
-        {draft.mode === 'range' && <Form.Item label="结束时间"><Input aria-label="结束时间" value={draft.endText} placeholder="00:00.000" onChange={event => patch({ endText: event.target.value })} /></Form.Item>}</div>
+      <details className="note-options"><summary>调整时间／选择问题类别</summary>{draft.mode !== 'whole' && <div className="time-input-row"><Form.Item label={draft.mode === 'range' ? '开始时间' : '标注时间'}><Input aria-label="开始时间" value={draft.startText} placeholder="00:00.000" disabled={!draft.mode || draft.mode === 'frame' || locked} onChange={event => patch({ startText: event.target.value })} /></Form.Item>
+        {draft.mode === 'range' && <Form.Item label="结束时间"><Input aria-label="结束时间" value={draft.endText} placeholder="00:00.000" onChange={event => patch({ endText: event.target.value })} /></Form.Item>}</div>}
       {draft.mode === 'range' && <div className="capture-row"><Button type="link" size="small" onClick={() => patch({ startText: formatTime(actualTime()) })}>设当前为开始</Button><Button type="link" size="small" onClick={() => patch({ endText: formatTime(actualTime()) })}>设当前为结束</Button></div>}
       <Form.Item label="问题类别（可选）"><Select aria-label="问题类别" allowClear value={draft.topic ?? undefined} placeholder="画面、字幕、声音、节奏…" options={Object.entries(TOPIC_LABEL).filter(([key]) => !media?.isAudio || key !== 'visual').map(([value, label]) => ({ value, label }))} onChange={value => patch({ topic: (value ?? null) as ReviewTopic | null })} /></Form.Item></details>
-      <Form.Item label="你的意见" htmlFor="opinion-text"><Input.TextArea id="opinion-text" aria-label="你的意见" value={draft.text} maxLength={2000} autoSize={{ minRows: 3, maxRows: 7 }} placeholder="这段画面、声音、字幕或节奏，希望怎么改？" onChange={event => patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} /></Form.Item>
+      <Form.Item label="你的意见" htmlFor="opinion-text"><Input.TextArea id="opinion-text" aria-label="你的意见" value={draft.text} maxLength={2000} autoSize={{ minRows: 3, maxRows: 7 }} placeholder={regions.length ? '按画面编号说明，例如：1：字幕遮挡；2：人物位置；3：多余元素。' : '这段画面、声音、字幕或节奏，希望怎么改？'} onChange={event => patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} /></Form.Item>
       <Button className="save-note" block type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online' || !!problem}>{view.kind === 'edit' ? '保存这条修改' : '保存这条意见'}</Button>
       <p className="note-safe" role="status">{service.state !== 'online' ? '连接不可用，当前无法保存。输入仍在本页，请按上方提示重新打开校对室。' : !editing ? '本窗口只读；明确取得编辑权后才能保存，当前输入仍保留。' : problem || '可保存；写入并回读确认后，进入空白新意见。'}</p>
       {view.kind === 'edit' && <Button type="link" disabled={locked || service.state !== 'online'} onClick={() => selected && request({ type: 'detail', note: selected })}>取消编辑，查看原意见</Button>}
     </Form>}
-    {draft.rect && <details className="coordinate-details"><summary>画面坐标 · 相对实际画幅</summary><div className="coordinate-fields">{(['x', 'y', 'width', 'height'] as const).map((key, index) => <label key={key}>{['横向', '纵向', '宽', '高'][index]}<Input aria-label={`画面${key}`} value={(draft.rect![key] * 100).toFixed(1)} suffix="%" readOnly={reading || locked} onChange={event => {
-      const value = Number(event.target.value) / 100; if (!Number.isFinite(value)) return;
-      const next: Rect = { ...draft.rect!, [key]: Math.min(key === 'x' || key === 'y' ? .98 : 1, clamp01(value)) }; next.width = Math.min(Math.max(.02, next.width), 1 - next.x); next.height = Math.min(Math.max(.02, next.height), 1 - next.y); patch({ rect: next });
-    }} /></label>)}</div></details>}
+    {regions.length > 0 && <div className="region-comments" aria-label="按编号填写画面说明">{regions.map(region => <div key={region.id} data-region-comment={region.id} className={selectedRegion === region.id ? 'is-active' : ''}><Button size="small" type={selectedRegion === region.id ? 'primary' : 'default'} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null) { player.current?.pause(); seek(draft.frameMs); } }}>框 {region.id}</Button>{reading ? <p>{region.text || '见上方共用意见'}</p> : <Input.TextArea aria-label={`框 ${region.id} 的说明`} placeholder="可选：单独说明此处；留空沿用共用意见" value={region.text ?? ''} maxLength={2000} autoSize={{ minRows: 1, maxRows: 3 }} disabled={locked} onFocus={() => setSelectedRegion(region.id)} onChange={event => patch({ regions: regions.map(item => item.id === region.id ? { ...item, text: event.target.value } : item) }, false)} />}</div>)}</div>}
+    {reading && selected && <RepairPanel note={selected} bundle={progress.bundle} disabled={locked || dirty} onRefresh={progress.refresh} onOpen={task => request({type:'task',task,readOnly:task.status !== 'waiting'})} />}
+    {regions.length > 0 && <details className="coordinate-details"><summary>画面区域 · {regions.length} 处</summary>
+      {regions.map(region => <div className="region-coordinate" key={region.id}><strong>区域 {region.id}</strong><div className="coordinate-fields">{(['x', 'y', 'width', 'height'] as const).map((key, index) => <label key={key}>{['横向', '纵向', '宽', '高'][index]}<Input aria-label={'区域' + region.id + '画面' + key} value={(region.rect[key] * 100).toFixed(1)} suffix="%" readOnly={reading || locked} onChange={event => {
+        const value = Number(event.target.value) / 100; if (!Number.isFinite(value)) return;
+        const next: Rect = { ...region.rect, [key]: Math.min(key === 'x' || key === 'y' ? .98 : 1, clamp01(value)) }; next.width = Math.min(Math.max(.02, next.width), 1 - next.x); next.height = Math.min(Math.max(.02, next.height), 1 - next.y);
+        patch({ regions: regions.map(item => item.id === region.id ? { ...item, rect: next } : item) });
+      }} /></label>)}</div></div>)}
+    </details>}
+    {!reading && <div className="region-edit-tools" aria-label="画面标注操作">
+      {regions.map(region => <Button size="small" key={region.id} disabled={locked} aria-label={'删除区域 ' + region.id} onClick={() => patch({ regions: regions.filter(item => item.id !== region.id) })}>删除框 {region.id}</Button>)}
+      {(regions.length > 0 || regionHistory.canUndo || regionHistory.canRedo) && <><Button size="small" disabled={locked || !regionHistory.canUndo} onClick={() => undoRegion()}>撤销标注</Button><Button size="small" disabled={locked || !regionHistory.canRedo} onClick={() => undoRegion(true)}>重做标注</Button><small>删除后保留其他框的编号；本次编辑可撤销 30 步。</small></>}
+    </div>}
     {feedback && <p className="save-error" role="alert">{feedback}</p>}
   </section>;
 
   const pendingDrafts = ['file', 'task', 'end', 'exit'].includes(pending?.type ?? '') ? [...(editChanged ? [editDraft] : []), newDraft, ...parked] : [view.kind === 'edit' ? editDraft : newDraft];
   const pendingProblem = pendingDrafts.filter(hasDraftWork).map(value => draftProblem(value, durationMs, !!selecting || capturing)).find(Boolean) ?? '';
-  const taskPanel = <ReviewTasks data={tasks.data} error={tasks.error} currentId={activeTask?.id ?? null} page={tasks.page} includeClosed={tasks.closed} online={service.state === 'online'} onPage={tasks.setPage} onClosed={tasks.setClosed} onRefresh={() => void tasks.refresh()} onOpen={task => request({ type: 'task', task })} onSelectFile={task => chooseFile(undefined, task)} onNew={() => chooseFile(undefined, null, true)} onStatus={(task, status) => void taskStatus(task, status)} />;
+  const taskPanel = <ReviewTasks data={tasks.data} error={tasks.error} currentId={activeTask?.id ?? null} page={tasks.page} includeClosed={tasks.closed} query={tasks.query} onQuery={tasks.setQuery} online={service.state === 'online'} filter={tasks.filter} sort={tasks.sort} onFilter={tasks.setFilter} onSort={tasks.setSort} onPage={tasks.setPage} onClosed={tasks.setClosed} onRefresh={() => void tasks.refresh()} onOpen={task => request({ type: 'task', task })} onSelectFile={task => chooseFile(undefined, task)} onNew={() => chooseFile(undefined, null, true)} onStatus={(task, status) => void taskStatus(task, status)} />;
   const otherTasks = Math.max(0, (tasks.data?.active ?? 0) - (activeTask?.status === 'waiting' ? 1 : 0));
-  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="task-player-20261011-r1">
+  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="review-0-3-0-beta-5">
     <header className="brandbar"><div className="brand"><img src="/brand/review-mark.svg" alt="Media Review" /><strong>Media Review</strong><span className="tool-name">音视频校对</span></div>
-      <div className="brand-actions"><span className="service-status-actions"><ServiceBadge state={service.state} />{service.state !== 'online' && service.state !== 'connecting' && <ServiceRecoveryButton compact state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />}</span><Badge count={tasks.data?.active ?? 0} color="#a76543"><Button onClick={() => setTasksOpen(true)}>校对任务</Button></Badge><Dropdown trigger={['click']} menu={{ items: [...(media ? [{ key: 'suspend', label: '挂起当前任务 · 释放媒体' }, { key: 'end', label: '结束当前任务 · 保留历史' }, { type: 'divider' as const }] : []), { key: 'restart', label: '重启校对服务', disabled: service.state !== 'online' || !!recoveryWait || !!busy }, { key: 'exit', label: '退出整个校对室', danger: true }], onClick: ({ key }) => { if (key === 'suspend') request({ type: 'suspend' }); else if (key === 'end') request({ type: 'end' }); else if (key === 'restart') void requestRestart(); else request({ type: 'exit' }); } }}><Button disabled={busy === 'saving'}>任务操作</Button></Dropdown><span className="privacy"><SafetyCertificateOutlined />素材留在本机</span>{media && <><span className="save-indicator" role="status">{stateLabel}</span><Button icon={screen === 'home' ? <ArrowLeftOutlined /> : <HomeOutlined />} disabled={busy === 'saving'} onClick={() => navigate(screen === 'home' ? 'review' : 'home')}>{screen === 'home' ? '返回当前素材' : '回到主页'}</Button></>}<Button icon={<FolderOpenOutlined />} disabled={busy === 'saving'} onClick={() => chooseFile()}>打开其他素材</Button>{media && <Button className="save-button" icon={<SaveOutlined />} disabled={locked || service.state !== 'online'} loading={busy === 'saving'} onClick={() => void save()}>保存进度</Button>}{media && <Button type="primary" icon={<CommentOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online'} onClick={() => void save(true)}>保存并交给 Agent</Button>}</div>
+      <div className="brand-actions"><Button onClick={() => setReadinessOpen(true)}>本机可用性</Button>{activeTask && <Button onClick={() => setVersionOpen(true)}>版本与返修 · V{activeTask.version?.number ?? 1}</Button>}<span className="service-status-actions"><ServiceBadge state={service.state} />{service.state !== 'online' && service.state !== 'connecting' && <ServiceRecoveryButton compact state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />}</span><Badge count={tasks.data?.active ?? 0} color="#a76543"><Button onClick={() => setTasksOpen(true)}>校对任务</Button></Badge><Dropdown trigger={['click']} menu={{ items: [...(media ? [{ key: 'suspend', label: '挂起当前任务 · 释放媒体' }, { key: 'end', label: '结束当前任务 · 保留历史' }, { type: 'divider' as const }] : []), { key: 'restart', label: '重启校对服务', disabled: service.state !== 'online' || !!recoveryWait || !!busy }, { key: 'exit', label: '退出整个校对室', danger: true }], onClick: ({ key }) => { if (key === 'suspend') request({ type: 'suspend' }); else if (key === 'end') request({ type: 'end' }); else if (key === 'restart') void requestRestart(); else request({ type: 'exit' }); } }}><Button disabled={busy === 'saving'}>任务操作</Button></Dropdown><span className="privacy"><SafetyCertificateOutlined />素材留在本机</span>{media && <><span className="save-indicator" role="status">{stateLabel}</span><Button icon={screen === 'home' ? <ArrowLeftOutlined /> : <HomeOutlined />} disabled={busy === 'saving'} onClick={() => navigate(screen === 'home' ? 'review' : 'home')}>{screen === 'home' ? '返回当前素材' : '回到主页'}</Button></>}<Button icon={<FolderOpenOutlined />} disabled={busy === 'saving'} onClick={() => chooseFile()}>打开其他素材</Button>{media && <Button className="save-button" icon={<SaveOutlined />} disabled={locked || service.state !== 'online'} loading={busy === 'saving'} onClick={() => void save()}>保存进度</Button>}{media && <Button type="primary" icon={<CommentOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online'} onClick={() => void save(true)}>{!notes.length && !hasDraftWork(newDraft) && !editChanged && !parked.some(hasDraftWork) ? '审阅完毕，没有意见' : '完成审阅并交接'}</Button>}</div>
       <input ref={fileInput} type="file" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) { const task = chosenManualTask.current, newTask = chosenNewTask.current, readOnly = chosenReadOnly.current; chosenManualTask.current = null; chosenNewTask.current = false; chosenReadOnly.current = false; request({ type: 'file', file, newTask, readOnly, ...(task ? { task } : {}) }); } }} />
     </header>
     <ServiceNotice state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />
     {launchFeedback && <Alert className="service-notice" type="warning" showIcon title="尚未确认恢复连接" description={launchFeedback} closable onClose={() => setLaunchFeedback('')} />}
-    {otherTasks > 0 && media && <Alert className="service-notice" type="info" showIcon title={`另有 ${otherTasks} 项任务等待校对`} description="新片只进入任务列表，不会切走当前正在看的片或合并意见。" action={<Button onClick={() => setTasksOpen(true)}>查看任务</Button>} />}
     {!primary && !media && !requestedTask.current && tasks.data && tasks.data.active > 0 && <Alert className="service-notice" type="info" showIcon title="已有校对室主窗口，本页不自动重复加载视频" description="任务已经登记。需要手动对照时，从任务列表选择；同一任务须明确接管才可编辑。" />}
-    {media && activeTask && <div className="task-context" data-active-task={activeTask.id}><Tag color={editing ? 'processing' : 'warning'}>{editing ? '本窗口可编辑' : '只读 · 不重复分析'}</Tag><strong>{activeTask.title}</strong><span>{activeTask.label || (activeTask.manual ? '手选任务' : 'Agent 送片')} · {activeTask.id.slice(0, 8)}</span>{!editing && <Button size="small" onClick={() => void takeEditing()}>明确接管编辑</Button>}{activeTask.legacy && <small>沿用旧版资料；旧记录只有抽样身份，请核对是否同一版本。</small>}</div>}
+    {media && activeTask && <div className="task-context" data-active-task={activeTask.id}><Tag color={editing ? 'processing' : 'warning'}>{editing ? '本窗口可编辑' : '只读 · 不重复分析'}</Tag><strong>{activeTask.title}</strong><span>{activeTask.label || (activeTask.manual ? '手选任务' : 'Agent 送片')} · {activeTask.id.slice(0, 8)}</span>{!editing && <Button size="small" onClick={() => void takeEditing()}>明确接管编辑</Button>}{activeTask.legacy && <small>沿用旧版资料；旧记录只有抽样身份，请核对是否同一版本。</small>}{otherTasks > 0 && <Button size="small" type="link" onClick={() => setTasksOpen(true)}>另有 {otherTasks} 项待校对</Button>}{completion && !unsaved && <Tag color="success">{completion.outcome === 'no-changes' ? '本轮已审阅 · 没有意见' : '本轮审阅已完成'}</Tag>}</div>}
     {screen === 'home' && !media && recoveryStatus && <Alert className="service-notice" type="warning" showIcon title={recoveryStatus} />}
     {screen === 'home' && <ReviewHome hasMedia={!!media} online={service.state === 'online'} onOpen={chooseFile} onResume={() => navigate('review')} tasks={taskPanel} />}
     <Drawer title="校对任务与分析队列" open={tasksOpen} size={560} onClose={() => setTasksOpen(false)} className="task-drawer">{taskPanel}</Drawer>
@@ -767,40 +891,41 @@ export function ReviewDesk() {
       <div className="project-row"><div className="project-name"><span className="media-kind">{media.isAudio ? <AudioOutlined /> : <VideoCameraOutlined />}</span><div><h1 title={media.file.name}>{media.file.name}</h1><small>{media.isAudio ? '本机录音' : `${media.width} × ${media.height} · 完整画面`} · {formatTime(durationMs, false)} · 时间从0开始</small></div></div><div className="step-line"><span><b>01</b>打开素材</span><span className="on"><b>02</b>找到位置</span><span><b>03</b>写意见并交接</span></div></div>
       {recordError && <Alert type="error" showIcon title={activeTask ? '已有意见未能读取，原记录保留' : '任务尚未登记，本页文件保留'} description={recordError} action={<Button onClick={() => setLoadAttempt(value => value + 1)}>重试读取</Button>} />}
       <div className="workspace"><section className="review-main" aria-label="媒体审阅区">
-        <section ref={videoSurface} className={`surface${presentation.expanded ? ' is-expanded' : ''}`} data-lenis-prevent={presentation.expanded || presentation.fullscreen ? '' : undefined} aria-label={presentation.expanded || presentation.fullscreen ? '放大的视频播放器' : '播放器'}><div className="surface-tools"><span className="surface-label" title={media.file.name}>{presentation.expanded || presentation.fullscreen ? media.file.name : '新建标注'}</span><div className="surface-actions"><Button disabled={locked || service.state !== 'online'} icon={<ClockCircleOutlined />} onClick={() => requestTarget('point')}>标记时间点</Button><Button disabled={locked || service.state !== 'online'} icon={<ScissorOutlined />} onClick={() => requestTarget('range')}>选择时间段</Button>{!media.isAudio && <Button disabled={locked || service.state !== 'online'} icon={<SelectOutlined />} onClick={() => requestTarget('frame')}>框选当前画面</Button>}{selecting && <Button disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消选取</Button>}</div></div>
+        <section ref={videoSurface} className={`surface${presentation.expanded ? ' is-expanded' : ''}`} data-lenis-prevent={presentation.expanded || presentation.fullscreen ? '' : undefined} aria-label={presentation.expanded || presentation.fullscreen ? '放大的视频播放器' : '播放器'}><div className="surface-tools"><span className="surface-label" title={media.file.name}>{presentation.expanded || presentation.fullscreen ? media.file.name : pendingRange ? '起点 ' + draft.startText : '定位问题'}</span><div className="surface-actions"><Button disabled={locked || service.state !== 'online'} icon={<ClockCircleOutlined />} onClick={() => requestTarget('point')}>标记时间点</Button><Button type={pendingRange ? 'primary' : 'default'} disabled={locked || service.state !== 'online'} icon={<ScissorOutlined />} onClick={markRangeBoundary}>{pendingRange ? '标记终点' : !reading && draft.mode === 'range' ? '重标起点' : '标记起点'}</Button>{!media.isAudio && <Button disabled={locked || service.state !== 'online'} icon={<SelectOutlined />} onClick={() => requestTarget('frame')}>{regions.length && !reading ? '继续框选同一帧' : '框选当前画面'}</Button>}{selecting === 'frame' && <Button type="primary" disabled={capturing} onClick={finishFrameSelection}>完成框选</Button>}{selecting && <Button disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消选取</Button>}</div></div>
           <div ref={stage} className={`viewer ${listenOnly ? 'audio-mode' : ''} ${media.width / media.height > 1 ? 'landscape' : ''}`}>
             {media.isAudio ? <audio ref={player as React.RefObject<HTMLAudioElement>} data-primary-media src={media.url} preload="metadata" onLoadedMetadata={metadata} onDurationChange={metadata} onTimeUpdate={onTimeUpdate} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setMediaError('浏览器无法播放此音频，请检查编码或换用可播放文件。'); setBusy(null); analysis.stop(); }} /> : <div className="video-holder" style={{ width: frameSize.width, height: frameSize.height, visibility: listenOnly ? 'hidden' : undefined }}>
               <video ref={player as React.RefObject<HTMLVideoElement>} data-primary-media src={media.url} playsInline preload="metadata" aria-label="当前原始视频" onLoadedMetadata={metadata} onDurationChange={metadata} onTimeUpdate={onTimeUpdate} onPlay={() => { setPlaying(true); setSelecting(null); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setMediaError('浏览器无法播放此视频，请检查编码或换用MP4。'); setBusy(null); analysis.stop(); }} />
-              {!playing && !listenOnly && reading && atReference && draft.rect && <div className="frame-layer readonly"><span className="region-rect" style={{ left: `${draft.rect.x * 100}%`, top: `${draft.rect.y * 100}%`, width: `${draft.rect.width * 100}%`, height: `${draft.rect.height * 100}%` }} /></div>}
-              {!playing && !listenOnly && !reading && !locked && !capturing && (selecting === 'frame' || (atReference && draft.rect)) && <FrameCanvas key={`${view.kind}-${draft.id ?? 'new'}-${draft.frameMs}`} rect={draft.rect} drawing={selecting === 'frame'} onChange={rect => { if (!reading) patch({ rect }); }} onDone={rect => { patch({ rect }); setSelecting(null); gestureBackup.current = null; focusOpinion(); }} />}
-              {selecting === 'frame' && <span className="draw-hint">在这一帧上拖框，松开后在旁边写意见</span>}
+              <VideoPreview videoRef={player} sourceKey={media.url} active={screen === 'review' && !listenOnly} />
+              {!playing && !listenOnly && reading && atReference && regions.length > 0 && <div className="frame-layer readonly"><FrameRegions regions={regions} selected={selectedRegion} onSelect={focusRegion} /></div>}
+              {!playing && !listenOnly && !reading && !locked && !capturing && (selecting === 'frame' || (atReference && regions.length > 0)) && <FrameCanvas key={view.kind + '-' + (draft.id ?? 'new') + '-' + draft.frameMs} regions={regions} regionSerial={draft.regionSerial ?? 0} selected={selectedRegion} onSelect={focusRegion} drawing={selecting === 'frame'} onChange={value => patch({ regions: value })} onDone={region => patch({ regions: [...regions, region] })} />}
+              {selecting === 'frame' && <span className="draw-hint">连续拖出多个框，编号后点“完成框选”</span>}
             </div>}
             {listenOnly ? <div className="audio-face"><div className="audio-title"><AudioOutlined />听原声，按位置留下意见</div><div className="audio-large-clock">{formatTime(currentMs, false)}<small>.{String(currentMs % 1000).padStart(3, '0')}</small></div><p className="audio-caption">{activeCue?.text ?? '点击右侧一句台词，或在下方时间轴上找到位置。'}</p><div className="audio-mini"><InfoCircleOutlined />播放位置只描述正在听哪里，不会改变意见目标。</div></div> : <><div className="viewer-side"><span>正在看的位置</span><strong>{formatTime(currentMs)}</strong><span>框选会暂停在此刻</span></div><div className="viewer-hint"><InfoCircleOutlined />继续播放时旧框会隐藏，参考画面仍留在意见旁。</div></>}
             {mediaError && <div className="media-error" role="alert">{mediaError}</div>}
           </div>
           <div className="transport"><Button className="transport-play" aria-label={playing ? '暂停' : '播放'} icon={playing ? <PauseOutlined /> : <PlayCircleOutlined />} disabled={!durationMs || capturing} onClick={() => void togglePlay()} /><strong className="clock">{formatTime(currentMs)}</strong><small>/ {formatTime(durationMs, false)}</small><Slider className="media-seek" ariaLabelForHandle="播放位置" min={0} max={Math.max(1, durationMs)} step={10} value={currentMs} onChange={seek} tooltip={{ formatter: value => formatTime(value ?? 0) }} disabled={!durationMs || capturing} /><Select className="speed-select" size="small" aria-label="播放速度" getPopupContainer={node => node.parentElement!} value={rate} options={[.5, .75, 1, 1.25, 1.5, 2].map(value => ({ value, label: `${value}×` }))} onChange={value => { setRate(value); if (player.current) player.current.playbackRate = value; }} />{!media.isAudio && !listenOnly && <div className="video-view-actions"><Button data-player-resize aria-label={presentation.expanded || presentation.fullscreen ? '收起视频画面' : '放大视频画面'} aria-pressed={presentation.expanded} icon={presentation.expanded || presentation.fullscreen ? <ShrinkOutlined aria-hidden /> : <ExpandAltOutlined aria-hidden />} disabled={presentation.pending} onClick={presentation.toggleExpanded}>{presentation.expanded || presentation.fullscreen ? '收起' : '放大'}</Button><Button aria-label={presentation.fullscreen ? '退出视频全屏' : '视频全屏'} aria-pressed={presentation.fullscreen} icon={presentation.fullscreen ? <FullscreenExitOutlined aria-hidden /> : <FullscreenOutlined aria-hidden />} loading={presentation.pending} onClick={() => void presentation.toggleFullscreen()}>{presentation.fullscreen ? '退出全屏' : '全屏'}</Button></div>}</div>
         </section>
-        <section className="sound-panel" aria-label="时间定位与选段"><div className="sound-head"><div className="sound-title"><AudioOutlined /><strong>波形与时间轴</strong><small>画面、声音共用时间范围</small></div><div className="sound-actions"><Button icon={<ScissorOutlined />} disabled={locked || service.state !== 'online'} onClick={() => requestTarget('range')}>选择时间段</Button><label className="contrast"><Switch size="small" checked={contrast} onChange={setContrast} aria-label="增强强弱对比" />强弱增强</label></div></div>
+        <section className="sound-panel" aria-label="时间定位与选段"><div className="sound-head"><div className="sound-title"><AudioOutlined /><strong>波形与时间轴</strong><small>画面、声音共用时间范围</small></div><div className="sound-actions"><Button icon={<ScissorOutlined />} disabled={locked || service.state !== 'online'} onClick={() => requestTarget('range')}>拖选时间段</Button><label className="contrast"><Switch size="small" checked={contrast} onChange={setContrast} aria-label="增强强弱对比" />强弱增强</label></div></div>
           <div className="timeline-tools"><Button size="small" aria-label="时间轴向前" disabled={zoom === 1} onClick={() => setViewStart(Math.max(0, viewStart - span * .7))}>←</Button><Button size="small" aria-label="时间轴向后" disabled={zoom === 1} onClick={() => setViewStart(Math.min(durationMs - span, viewStart + span * .7))}>→</Button><Button size="small" aria-label="缩小时间轴" disabled={zoom === 1} onClick={() => changeZoom(zoom / 1.5)}>−</Button><Button size="small" aria-label="放大时间轴" disabled={zoom === 16} onClick={() => changeZoom(zoom * 1.5)}>＋</Button><Button size="small" disabled={zoom === 1} onClick={() => changeZoom(1)}>全览</Button><span>{zoom.toFixed(1)}×</span>{selecting === 'range' && <Button size="small" onClick={cancelSelection}>取消选段</Button>}</div>
-          {screen === 'review' && <ReviewWaveform peaks={analysis.peaks} durationMs={durationMs} currentMs={currentMs} viewStartMs={viewStart} viewEndMs={viewEnd} selection={selection} selecting={selecting === 'range'} disabled={!durationMs || !!busy || capturing} large={listenOnly} contrast={contrast} notes={ordered} onSeek={seek} onNote={showNote} onRangeChange={(begin, finish) => { player.current?.pause(); patch({ mode: 'range', startText: formatTime(begin), endText: formatTime(finish) }); }} onRangeDone={() => { setSelecting(null); gestureBackup.current = null; focusOpinion(); }} onRangeCancel={cancelSelection} />}
-          <div className="sound-foot"><span>{formatTime(viewStart, false)}</span><span>{selecting === 'range' ? '在时间轴上拖选起止' : selection ? `${formatTime(selection.start)} — ${formatTime(selection.end)}` : '点击定位，或先点“选择时间段”再拖选'}</span><span>{formatTime(viewEnd, false)}</span></div>
-          <div className="wave-bottom"><span>{analysis.peaks.length ? '真实RMS · 整段统一标尺 · 不改变音量' : analysis.waveError || (analysis.running ? '正在本机计算波形，仍可按时间标记。' : '波形暂不可用，仍可按时间标记。')}</span>{selection && <><Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={playRange}>回放选段</Button><label><Switch size="small" checked={loop} onChange={setLoop} />循环</label></>}</div>
+          {screen === 'review' && <ReviewWaveform peaks={analysis.peaks} durationMs={durationMs} currentMs={currentMs} viewStartMs={viewStart} viewEndMs={viewEnd} selection={selection ?? (pendingRange && currentMs > start! ? { start: start!, end: currentMs } : null)} pendingStart={pendingRange ? start : null} selecting={selecting === 'range'} disabled={!durationMs || !!busy || capturing} large={listenOnly} contrast={contrast} notes={ordered} onSeek={seek} onNote={showNote} onRangeChange={(begin, finish) => { player.current?.pause(); patch({ mode: 'range', startText: formatTime(begin), endText: formatTime(finish) }); }} onRangeDone={() => { setSelecting(null); gestureBackup.current = null; focusOpinion(); }} onRangeCancel={cancelSelection} />}
+          <div className="sound-foot"><span>{formatTime(viewStart, false)}</span><span>{selecting === 'range' ? '在时间轴上拖选起止' : selection ? `${formatTime(selection.start)} — ${formatTime(selection.end)}` : pendingRange ? '起点已记录：继续播放，到问题结束时点“标记终点”' : '边看边标起点、终点，也可以拖选时间段'}</span><span>{formatTime(viewEnd, false)}</span></div>
+          <details className="fine-position"><summary>快捷键与精细定位</summary><p>I 起点 · O 终点 · 空格播放/暂停 · ←/→ 一秒 · Shift+←/→ 或 ,/. 细步 · N 下一条问题。细步为时间定位，精确剪点仍须回源核对。</p><div className="product-actions"><Select size="small" aria-label="细步时长" value={fineStep} onChange={setFineStep} options={[{value:10,label:'10 毫秒'},{value:40,label:'40 毫秒'},{value:100,label:'100 毫秒'}]} /><Button size="small" onClick={() => { player.current?.pause(); seek(actualTime()-fineStep); }}>向前细步</Button><Button size="small" onClick={() => { player.current?.pause(); seek(actualTime()+fineStep); }}>向后细步</Button></div></details><div className="wave-bottom"><span>{analysis.peaks.length ? '真实RMS · 整段统一标尺 · 不改变音量' : analysis.waveError || (analysis.running ? '正在本机计算波形，仍可按时间标记。' : '波形暂不可用，仍可按时间标记。')}</span>{selection && <><Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={playRange}>回放选段</Button><Select size="small" aria-label="回放前后上下文" value={contextPad} onChange={setContextPad} options={[{value:0,label:'仅选段'},{value:500,label:'前后 0.5 秒'},{value:1000,label:'前后 1 秒'},{value:2000,label:'前后 2 秒'}]} /><label><Switch size="small" checked={loop} onChange={setLoop} />循环</label></>}</div>
           <div className="player-options"><label><Button type="text" size="small" icon={<SoundOutlined />} aria-label={volume ? '静音' : '取消静音'} onClick={() => { if (volume) { oldVolume.current = volume; setVolume(0); } else setVolume(oldVolume.current || 75); }} /><Slider ariaLabelForHandle="音量" min={0} max={100} value={volume} onChange={setVolume} /><span>{volume}%</span></label>{!media.isAudio && <label><Switch size="small" checked={listenOnly} onChange={value => { setListenOnly(value); cancelSelection(); }} />只听声音</label>}</div>
           <WaveData peaks={analysis.peaks} durationMs={durationMs} />
         </section>
         {!media.isAudio && <details className="frame-disclosure" onToggle={event => setFrameIndexOpen(event.currentTarget.open)}><summary>画面索引 · 展开后按需生成</summary>{frameIndexOpen && screen === 'review' && visible && <FrameStrip url={media.url} durationMs={durationMs} currentMs={currentMs} onSeek={seek} viewStartMs={viewStart} viewEndMs={viewEnd} />}</details>}
         {listenOnly && <details className="compare-disclosure" onToggle={event => setCompareOpen(event.currentTarget.open)}><summary>对照另一版声音 · 收起可释放对照文件</summary>{compareOpen && screen === 'review' && <AudioCompare sourceUrl={media.url} sourceDurationMs={durationMs} currentMs={currentMs} sourcePlaying={playing} sourceName={media.file.name} onPauseSource={() => player.current?.pause()} onSeekSource={seek} />}</details>}
       </section><aside className="side-column" aria-label="意见与台词">
-        <section className="preview-list" aria-label="意见清单"><header><strong>意见清单</strong><span className="list-count"><small>按时间排列</small><output>{notes.length}</output></span></header><p className="list-instruction">点击查看完整意见，并回到对应时间和画面。</p><div className="list-create"><Button icon={<PlusOutlined />} disabled={locked || service.state !== 'online'} onClick={() => request({ type: 'new' })}>新建意见</Button>{parked.length > 0 && <Button size="small" onClick={() => request({ type: 'restore' })}>恢复未保存草稿（{parked.length}）</Button>}</div>
+        {composition}
+        <section className="preview-list" aria-label="意见清单"><header><strong>意见清单</strong><span className="list-count"><small>整片意见在前</small><output>{notes.length}</output></span></header><p className="list-instruction">点击查看完整意见，并回到对应时间和画面。</p><div className="note-filters"><Input.Search aria-label="搜索意见" placeholder="搜索意见与返修说明" allowClear value={noteQuery} onChange={event => setNoteQuery(event.target.value)} /><Select aria-label="筛选意见类别" value={topicFilter} onChange={setTopicFilter} options={[{value:'',label:'全部类别'},...Object.entries(TOPIC_LABEL).map(([value,label])=>({value,label}))]} /><Select aria-label="筛选处理进度" value={progressFilter} onChange={setProgressFilter} options={[{value:'',label:'全部进度'},...Object.entries(STATUS_LABEL).map(([value,label])=>({value,label}))]} /><Button size="small" disabled={!ordered.length} onClick={nextIssue}>下一条问题（N）</Button></div>{progress.error && <p role="alert">{progress.error}</p>}<div className="list-create"><Button icon={<PlusOutlined />} disabled={locked || service.state !== 'online'} onClick={() => request({ type: 'new' })}>新建意见</Button>{parked.length > 0 && <Button size="small" onClick={() => request({ type: 'restore' })}>恢复未保存草稿（{parked.length}）</Button>}</div>
           {ordered.length ? <ol data-lenis-prevent>{ordered.map((note, index) => <li key={note.id} data-review-id={note.id}><Button className={`review-item ${view.kind !== 'new' && note.id === view.id ? 'current' : ''}`} type="text" disabled={!!busy} onClick={() => showNote(note)} onKeyDown={event => {
             if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const buttons = root.current?.querySelectorAll<HTMLButtonElement>('.review-item'); if (!buttons?.length) return; buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : Math.max(0, Math.min(buttons.length - 1, index + (event.key === 'ArrowUp' ? -1 : 1)))].focus(); }
-          }}><span className="review-number">{String(index + 1).padStart(2, '0')}</span><span className="review-item-copy"><span className="review-item-meta"><strong>{formatTime(note.startMs)}{note.endMs !== null ? ` — ${formatTime(note.endMs)}` : ''}</strong><span>{KIND_LABEL[note.kind]}</span></span><span className="review-item-text">{note.text}</span></span></Button></li>)}</ol> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={recordError ? '记录未读回，不代表没有意见' : '保存后的意见会出现在这里'} />}
-          <div className="list-foot"><span>清单较多时可在这里滚动</span>{selected && <Popconfirm title="移除这条意见？" description="保存后才更新本机记录，原媒体不变。" okText="移除" cancelText="取消" onConfirm={() => { setNotes(old => old.filter(note => note.id !== selected.id)); if (view.kind === 'edit') setEditDraft(emptyDraft()); setView({ kind: 'new' }); setDirty(true); invalidate(); }}><Button type="text" danger size="small" icon={<DeleteOutlined />} disabled={locked || service.state !== 'online'}>移除所选</Button></Popconfirm>}</div>
+          }}><span className="review-number">{String(index + 1).padStart(2, '0')}</span><span className="review-item-copy"><span className="review-item-meta"><strong>{note.scope === 'whole' ? '整片意见' : formatTime(note.startMs!)}{note.endMs !== null ? ` — ${formatTime(note.endMs)}` : ''}</strong><span>{KIND_LABEL[note.kind]} · {STATUS_LABEL[progress.bundle?.statuses[note.id]?.status ?? (note.kind === 'discuss' ? 'clarify' : 'pending')]}</span></span><span className="review-item-text">{note.text}</span></span></Button></li>)}</ol> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={recordError ? '记录未读回，不代表没有意见' : '保存后的意见会出现在这里'} />}
+          <div className="list-foot">{deletedNotes.length > 0 ? <Button type="link" size="small" disabled={locked} onClick={undoNoteDeletion}>撤销删除意见</Button> : <span>清单较多时可在这里滚动</span>}{selected && <Popconfirm title="移除这条意见？" description="保存后才更新本机记录，原媒体不变。" okText="移除" cancelText="取消" onConfirm={() => removeNote(selected)}><Button type="text" danger size="small" icon={<DeleteOutlined />} disabled={locked || service.state !== 'online'}>移除所选</Button></Popconfirm>}</div>
         </section>
-        {composition}
-        <section className="transcript"><header className="transcript-head"><strong>按句找位置</strong><span>点击整句可跳转</span></header><TranscriptPanel disabled={locked || service.state !== 'online'} mediaKey={media.url} cues={analysis.cues} status={analysis.status} error={analysis.error} progress={analysis.progress} elapsedMs={analysis.elapsedMs} onCancel={analysis.stop} onRetry={analysis.retry} currentMs={currentMs} durationMs={durationMs} onSeek={seek} onMark={cue => requestTarget('range', cue)} /></section>
+        <section className="transcript"><header className="transcript-head"><strong>按句找位置</strong><span>点击整句可跳转</span></header><TranscriptPanel taskId={activeTask?.id} onImportedCues={setImportedCues} disabled={locked || service.state !== 'online'} mediaKey={media.url} cues={analysis.cues} status={analysis.status} error={analysis.error} progress={analysis.progress} elapsedMs={analysis.elapsedMs} onCancel={analysis.stop} onRetry={analysis.retry} currentMs={currentMs} durationMs={durationMs} onSeek={seek} onMark={cue => requestTarget('range', cue)} /></section>
         {handoff && !unsaved && <Button icon={<CommentOutlined />} onClick={() => setHandoffOpen(true)}>查看已保存的交接内容</Button>}
-        {notes.length > 0 && <Button loading={exporting} disabled={unsaved || !!busy || service.state !== 'online'} onClick={async () => {
+        {(notes.length > 0 || completion) && <Button loading={exporting} disabled={unsaved || !!busy || service.state !== 'online'} onClick={async () => {
           setExporting(true);
           try { const result = await exportRecord(media.identity.fingerprint); if (!result.exported) throw new Error('导出未确认'); setExportPath(result.directory); }
           catch (cause) { message.error(cause instanceof Error ? cause.message : '导出未完成，原意见保留'); }
@@ -809,15 +934,24 @@ export function ReviewDesk() {
         {recordPath && <details className="record-actions"><summary>查看本机意见记录位置</summary><p>{recordPath}</p></details>}
       </aside></div>
       <div className="recovery-status" role="status">{recoveryStatus}{recoveryConflict && <Button type="link" size="small" onClick={() => setRecoveryCompare(true)}>比对旧恢复副本</Button>}</div>
-      <div className="bottom-hint"><span>空格播放／暂停 · ← →定位 · Esc取消选取 · Ctrl／⌘＋Enter保存意见</span><span>原素材只读 · 精确剪点回源核对</span></div><p className="font-credit"><a href="/licenses/MiSans-License.pdf" target="_blank" rel="noopener">本页使用 MiSans · © Xiaomi</a></p>
+      <div className="bottom-hint"><span>空格播放／暂停 · ← →定位 · Esc取消选取 · Ctrl／⌘＋Z撤销标注 · Ctrl／⌘＋Enter保存意见</span><span>原素材只读 · 精确剪点回源核对</span></div><p className="font-credit"><a href="/licenses/MiSans-License.pdf" target="_blank" rel="noopener">本页使用 MiSans · © Xiaomi</a></p>
     </main>}
-    <Modal open={recoveryCompare && !!recoveryConflict} title="正式意见与旧恢复副本不同，请选择编辑起点" width={900} onCancel={() => setRecoveryCompare(false)} footer={<><Button disabled={!editing || service.state !== 'online'} onClick={() => void resolveRecovery(false)}>保留旧副本，使用正式意见</Button><Button type="primary" disabled={!editing || service.state !== 'online'} onClick={() => void resolveRecovery(true)}>保留旧副本，从它继续编辑</Button></>}>
+    <Drawer title="本机可用性与版本" open={readinessOpen} onClose={() => setReadinessOpen(false)} size={560} destroyOnHidden><ReadinessPanel /></Drawer>
+    <Drawer title="作品版本与返修复核" open={versionOpen} onClose={() => setVersionOpen(false)} size={720} destroyOnHidden>{activeTask && <VersionPanel task={activeTask} editable={editing && !unsaved} onOpen={task => { setVersionOpen(false); request({type:'task',task,readOnly:task.status !== 'waiting'}); }} onNew={() => { setVersionOpen(false); chooseFile(undefined,null,true,false,activeTask.id); }} onSeek={ms => { setVersionOpen(false); player.current?.pause(); seek(ms); }} />}</Drawer>
+    <Modal centered open={recoveryCompare && !!recoveryConflict} title="正式意见与旧恢复副本不同，请选择编辑起点" width={900} onCancel={() => setRecoveryCompare(false)} footer={<><Button disabled={!editing || service.state !== 'online'} onClick={() => void resolveRecovery(false)}>保留旧副本，使用正式意见</Button><Button type="primary" disabled={!editing || service.state !== 'online'} onClick={() => void resolveRecovery(true)}>保留旧副本，从它继续编辑</Button></>}>
       <p>两个版本不会自动合并。选择前会将旧恢复副本独立归档；从旧副本继续后，正式保存会以本页全部意见为准，并保留被替换的正式旧版。</p>
-      <div className="review-conflict-columns"><section><h3>当前正式意见</h3><pre>{JSON.stringify(notes, null, 2)}</pre></section><section><h3>旧恢复意见与未完成草稿</h3><pre>{JSON.stringify(recoveryConflict ? { notes: recoveryConflict.notes, newDraft: { ...recoveryConflict.newDraft, snapshot: recoveryConflict.newDraft.snapshot ? '参考画面仍在旧副本中' : null }, editDraft: { ...recoveryConflict.editDraft, snapshot: recoveryConflict.editDraft.snapshot ? '参考画面仍在旧副本中' : null }, parked: recoveryConflict.parked.map(value => ({ ...value, snapshot: value.snapshot ? '参考画面仍在旧副本中' : null })) } : null, null, 2)}</pre></section></div>
+      <ReviewDifference key={recoveryConflict?.media.fingerprint} left={notes} right={recoveryConflict?.notes ?? []} leftLabel="正式意见" rightLabel="恢复副本" drafts={recoveryConflict ? [recoveryConflict.newDraft,recoveryConflict.editDraft,...recoveryConflict.parked] : []} onMerge={editing ? async merged => { if (!recoveryConflict) return; if (await resolveRecovery(true)) { setNotes(merged); setDirty(true); if (recoveryConflict.view.kind !== 'new' && !merged.some(note => note.id === (recoveryConflict.view as {id:string}).id)) setView({kind:'new'}); } } : undefined} />
     </Modal>
-    <Modal open={!!conflict} title="正式意见已有另一版本，本页输入未覆盖" width={900} onCancel={() => setConflict(null)} footer={<><Button onClick={() => setConflict(null)}>保留本页，继续比对</Button><Button type="primary" danger loading={busy === 'saving'} disabled={!editing || service.state !== 'online'} onClick={() => { if (conflict) void save(conflict.finish, false, conflict.allDrafts, conflict.latest.revision); }}>保留旧版，以本页为准保存</Button></>}>
+    <Modal centered open={!!conflict} title="正式意见已有另一版本，本页输入未覆盖" width={900} onCancel={() => setConflict(null)} footer={<><Button onClick={() => setConflict(null)}>保留本页，继续比对</Button><Button type="primary" danger loading={busy === 'saving'} disabled={!editing || service.state !== 'online'} onClick={() => { if (conflict) void save(conflict.finish, false, conflict.allDrafts, conflict.latest.revision); }}>保留旧版，以本页为准保存</Button></>}>
       <p>请先比对。不会自动合并两个窗口的意见；下方保存将以本页全部意见为准，服务仍会再次核对版本，并将被替换的正式记录保留到本任务的 versions 文件夹。</p>
-      <div className="review-conflict-columns"><label>本机最新正式意见<Input.TextArea aria-label="本机最新正式意见" readOnly value={JSON.stringify(conflict?.latest.record?.notes ?? [], null, 2)} autoSize={{ minRows: 12, maxRows: 22 }} onClick={event => event.currentTarget.select()} /></label><label>本页清单与未保存文字<Input.TextArea aria-label="本页保留的意见" readOnly value={JSON.stringify({ notes, newDraft: { ...newDraft, snapshot: newDraft.snapshot ? '参考截图已在本页保留，未在此重复显示' : null }, editDraft: { ...editDraft, snapshot: editDraft.snapshot ? '参考截图已保留' : null }, parked: parked.map(value => ({ ...value, snapshot: value.snapshot ? '参考截图已保留' : null })) }, null, 2)} autoSize={{ minRows: 12, maxRows: 22 }} onClick={event => event.currentTarget.select()} /></label></div>
+      <ReviewDifference key={conflict?.latest.revision} left={conflict?.latest.record?.notes ?? []} right={conflict?.proposed ?? notes} leftLabel="最新正式意见" rightLabel="本页意见" drafts={[newDraft,editDraft,...parked]} onMerge={editing ? async merged => {
+        if (!conflict || !media) return;
+        try {
+          await archiveWorkspace({format:'media-review-workspace/v4',media:media.identity,currentMs:actualTime(),notes,baseNotes,dirty,newDraft,editDraft,parked,view});
+          const remaining = conflict.finish || conflict.allDrafts ? [] : view.kind === 'edit' && hasDraftWork(newDraft) ? [...parked,newDraft] : parked;
+          setNotes(merged); setBaseNotes(conflict.latest.record?.notes ?? []); setRecordRevision(conflict.latest.revision); setDirty(true); setNewDraft(emptyDraft()); setEditDraft(emptyDraft()); setParked(remaining); setView({kind:'new'}); setConflict(null); setFeedback('逐条选择已带回本页；选择前的完整输入已另存恢复副本。请核对并保存。');
+        } catch (cause) { message.error(cause instanceof Error ? cause.message : '原输入留存未确认，未改变选择'); }
+      } : undefined} />
       {feedback && <Alert type="warning" showIcon title={feedback} />}
     </Modal>
     <Modal open={!!exportPath} title="返修资料已导出到本机" onCancel={() => setExportPath('')} footer={<Button onClick={() => setExportPath('')}>关闭</Button>}>
@@ -831,7 +965,7 @@ export function ReviewDesk() {
       <p>取消会保留文字、时间和画面位置；写入及回读确认前不会清空草稿。</p><p>{pendingProblem || '可以先保存当前全部意见，也可以明确放弃本页未保存的内容。'}</p>{feedback && <Alert type="error" showIcon title={feedback} />}
     </Modal>
     <Modal open={referenceOpen} title={`意见参考画面 · ${formatTime(draft.frameMs ?? 0)}`} footer={<Button onClick={() => setReferenceOpen(false)}>关闭参考画面</Button>} onCancel={() => setReferenceOpen(false)} width={760} centered>
-      {targetImage && <div className="reference-full-frame" style={{ aspectRatio: draft.reference ? `${draft.reference.width}/${draft.reference.height}` : `${media?.width}/${media?.height}` }}><img src={targetImage} alt="标注当时的完整参考画面" />{draft.rect && <span className="thumb-rect" style={{ left: `${draft.rect.x * 100}%`, top: `${draft.rect.y * 100}%`, width: `${draft.rect.width * 100}%`, height: `${draft.rect.height * 100}%` }} />}</div>}<p className="note-safe">这是意见绑定的画面，不是播放器后来的位置；保存时与意见一起写入本机。</p>
+      {targetImage && <div className="reference-full-frame" style={{ aspectRatio: referenceAspect, width: "min(100%, calc((100dvh - 270px) * " + referenceAspect + "))" }}><img src={targetImage} alt="标注当时的完整参考画面" /><FrameRegions regions={regions} selected={selectedRegion} onSelect={focusRegion} /></div>}<p className="note-safe">这是意见绑定的画面，不是播放器后来的位置；保存时与意见一起写入本机。</p>
     </Modal>
   </div>;
   const scrollOptions = useMemo(() => ({ autoRaf: true, smoothWheel: !reduced, duration: .65, prevent: (node: HTMLElement) => !!node.closest('[data-lenis-prevent],.ant-modal,.ant-select-dropdown,.waveform,.frame-layer,input,textarea') }), [reduced]);

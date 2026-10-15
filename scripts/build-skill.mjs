@@ -26,7 +26,7 @@ const built = await execute(process.execPath, [vite, 'build', '--mode', 'standal
 console.log(built.stdout);
 if (built.stderr) console.error(built.stderr);
 const copy = async (from, to) => fs.cp(from, to, { recursive: true, force: false, errorOnExist: true });
-for (const name of ['SKILL.md', 'README.md', 'scripts', '安装 Media Review.cmd', '初始化桌面入口.cmd', '打开 Media Review.cmd', '启动 Media Review 本机音视频校对室.cmd', '启动入口说明.txt']) await copy(path.join(root, 'skill', name), path.join(output, name));
+for (const name of ['SKILL.md', 'README.md', 'references', 'scripts', '安装 Media Review.cmd', '初始化桌面入口.cmd', '打开 Media Review.cmd', '启动 Media Review 本机音视频校对室.cmd', '启动入口说明.txt']) await copy(path.join(root, 'skill', name), path.join(output, name));
 await copy(path.join(root, 'LICENSE'), path.join(output, 'LICENSE'));
 const app = path.join(output, 'app');
 await fs.mkdir(path.join(app, 'server'), { recursive: true });
@@ -35,7 +35,7 @@ await fs.mkdir(path.join(app, 'dist'));
 for (const file of await fs.readdir(path.join(root, 'server'))) if (file.endsWith('.mjs') && !file.endsWith('.test.mjs')) await copy(path.join(root, 'server', file), path.join(app, 'server', file));
 await copy(path.join(root, 'scripts/review-agent.mjs'), path.join(app, 'scripts/review-agent.mjs'));
 await fs.writeFile(path.join(app, 'standalone.json'), JSON.stringify({ format: 'media-review-standalone/v1', version: pkg.version }) + '\n', { flag: 'wx' });
-await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ name: 'media-review-runtime', private: true, type: 'module', version: pkg.version, license: pkg.license, engines: { node: '>=24' } }) + '\n', { flag: 'wx' });
+await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ name: 'media-review-runtime', private: true, type: 'module', version: pkg.version, localRevision: pkg.localRevision, license: pkg.license, engines: { node: '>=24' } }) + '\n', { flag: 'wx' });
 for (const name of ['index.html', 'assets']) await copy(path.join(bundle, name), path.join(app, 'dist', name));
 await fs.mkdir(path.join(app, 'dist/fonts'));
 await fs.mkdir(path.join(app, 'dist/brand'));
@@ -70,5 +70,5 @@ async function walk(directory) {
   }
 }
 await walk(output);
-await fs.writeFile(path.join(output, 'skill-package.json'), JSON.stringify({ format: 'media-review-skill-package/v1', name: 'media-review', skill_id: '56e78c64-701a-4a1b-85cb-751491ca743a', version: pkg.version, files: files.sort((a, b) => a.path.localeCompare(b.path)) }, null, 2) + '\n', { flag: 'wx' });
+await fs.writeFile(path.join(output, 'skill-package.json'), JSON.stringify({ format: 'media-review-skill-package/v1', name: 'media-review', skill_id: '56e78c64-701a-4a1b-85cb-751491ca743a', version: pkg.version, localRevision: pkg.localRevision, files: files.sort((a, b) => a.path.localeCompare(b.path)) }, null, 2) + '\n', { flag: 'wx' });
 console.log(JSON.stringify({ built: true, output, version: pkg.version, files: files.length, userDataIncluded: false, installed: false, published: false }));

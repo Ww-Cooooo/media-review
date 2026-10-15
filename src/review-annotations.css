@@ -1,0 +1,12 @@
+.frame-canvas-host { position: absolute; inset: 0; }
+.region-label-anchor { position: absolute; pointer-events: none; z-index: 3; }
+.region-number { position: absolute; top: 0; left: 0; display: grid; place-items: center; min-width: 23px; height: 23px; padding: 0 4px; font: 600 14px/1 MiSans, sans-serif; color: #30271f; background: #ffd1a6; border: 1px solid #493b30; border-radius: 0 0 4px 0; box-shadow: 0 1px 3px #0005; pointer-events: none; }
+.target-frame .region-number { min-width: 10px; height: 12px; padding: 0 1px; font-size: 9px; border: 0; border-radius: 0; box-shadow: none; }
+.target-frame .region-rect { border-width: 1px; }
+.reference-full-frame { height: auto; max-height: none; }
+.region-coordinate + .region-coordinate { margin-top: 12px; padding-top: 10px; border-top: 1px solid #d7c4ad; }
+.range-start-marker { position: absolute; top: 0; bottom: 0; border-left: 2px solid #ffd1a6; z-index: 2; pointer-events: none; }
+.range-start-marker > span { display: block; width: max-content; padding: 3px 6px; color: #30271f; background: #ffd1a6; font-size: 12px; line-height: 1.4; }
+.surface-tools { flex-wrap: wrap; }
+.surface-actions { flex-wrap: wrap; }
+.draw-hint { top: auto; bottom: 10px; margin: 0; }

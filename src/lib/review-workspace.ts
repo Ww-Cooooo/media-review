@@ -3,7 +3,7 @@ import type { ReviewDraft } from './review-draft';
 import type { ReviewContext } from './api';
 
 export interface ReviewWorkspace {
-  format: 'media-review-workspace/v1'; media: MediaIdentity; currentMs: number;
+  format: 'media-review-workspace/v1' | 'media-review-workspace/v2' | 'media-review-workspace/v3' | 'media-review-workspace/v4'; media: MediaIdentity; currentMs: number;
   notes: ReviewNote[]; baseNotes: ReviewNote[]; dirty: boolean;
   newDraft: ReviewDraft; editDraft: ReviewDraft; parked: ReviewDraft[];
   view: { kind: 'new' } | { kind: 'detail' | 'edit'; id: string };

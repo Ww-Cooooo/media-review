@@ -8,13 +8,13 @@ Media Review 是一个本机音视频校对室，也是一套供 Agent 使用的
 
 ## 开始使用
 
-当前版本为 **0.3.0-beta.4 Windows 预发布版**，完整安装包见 [v0.3.0-beta.4 发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.4)。本版将桌面启动入口换为透明底小电视IP图标，安装和初始化入口时自动配置；页面重启与Windows本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏沿用beta.3。旧版安装不会自动更新，本项目仍处于测试阶段，不是稳定版承诺。
+当前版本为 **0.3.0-beta.5 Windows 预发布版**，完整安装包见 [本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.5)。本版补齐边看边标记、多区域说明、逐条返修、新旧版本复核和可读导出，保留小电视桌面图标及原有播放功能。旧版安装不会自动更新，本项目仍处于测试阶段。
 
 ### 下载安装（Windows）
 
 准备 **Node.js 24+、PowerShell 7+（命令为 `pwsh`）和支持素材编码的浏览器**，推荐 Microsoft Edge 或 Chrome。未安装运行环境时，可从 [Node.js 24 官方下载目录](https://nodejs.org/dist/latest-v24.x/)选择 Windows `.msi` 安装版，并按 [微软官方说明](https://learn.microsoft.com/zh-cn/powershell/scripting/install/install-powershell-on-windows)安装 PowerShell 7；详细选择与检查方法见[安装说明](docs/install-windows.md)。
 
-下载 [media-review-0.3.0-beta.4-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.4/media-review-0.3.0-beta.4-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
+下载 [media-review-0.3.0-beta.5-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.5/media-review-0.3.0-beta.5-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
 
 安装完成后双击桌面图标，选择一段视频或音频，标记时间点并保存第一条意见。在首页“校对任务”中查看对应任务，点“查看资料”找到保存位置。[完整安装及旧版升级说明](docs/install-windows.md)。
 
@@ -35,13 +35,19 @@ npm start
 ## 一轮校对怎样完成
 
 1. **Agent 出片并自检。** 成片写入完成后，Agent 调用入口带入这一版，在自己的工作循环中看画面、听声音、核对字幕与节奏。工具证据和用户意见分开保存。
-2. **你在具体位置留下意见。** 标记时间点、选择共同时间段，或框选当前画面，写下“修改／保留／待讨论”。时间段可同时涉及画面、声音、字幕和节奏，不只是声音段。
-3. **保存并交接。** 单条意见写入并回读成功后进入空白新意见。整轮完成点击“保存并交给 Agent”，包含最后一条完整草稿；复制弹窗内容，回到能访问本机文件的 Agent 聊天，粘贴并发送。
-4. **Agent 按实际请求返修。** Agent 读取当次意见及参考图，另行输出新版本，再带入校对室。原媒体、已有成片和旧意见不应被覆盖。
+2. **边看边留下意见。** 先标起点，继续看，结束时再标终点；同一条意见可附参考帧和多个编号框，分别填写说明，也能直接写整片意见。“修改／保留／待讨论”表达你的意图。
+3. **完成审阅并交接。** 单条意见保存回读成功后进入新意见。整轮完成会固定本次意见版本；没有问题也能明确完成。复制交接内容，回到能访问本机文件的 Agent 聊天，粘贴并发送。
+4. **逐条返修，再看新版。** Agent 读取固定的本轮意见及参考图，登记处理结果，另行输出关联的新版本。你在“版本与返修”中查看 V1/V2、逐条复核或重新打开问题；旧时间码和画面框仍属于原版，原媒体与旧意见保留。
 
 **保存、复制、发送是三个不同动作。** 只保存或复制，不会自动开始返修、上传或发布。taskId与来源标签帮助辨认任务，但不绑定或唤醒原聊天；请把交接内容发送到负责这项任务的Agent对话。应用没有整片认可或发布按钮，是否认可、是否允许发布，以用户另行明确表态为准，不能由“保留”意见或结束任务代替。
 
 通过其他软件制作的成片也可以手动选择；没有 Agent 时，仍可交给剪辑人员处理。先正式保存这一轮，关闭交接弹窗返回当前素材，再点击右侧意见栏底部的“导出返修资料包”。导出弹窗会给出实际文件夹位置，复制到资源管理器即可找到；把整个资料文件夹交给对方，并另行提供正确源媒体。**这个界面操作不需要查找媒体指纹**，保存文件夹也不等于已导出的资料包。
+
+## 连续校对更顺手
+
+任务可以搜索、筛选、重命名、归档和恢复；意见可按关键词、类别和处理进度查找。I/O 标起终点，N 跳到下一条问题；字幕支持搜索及导入 SRT/VTT。画面框可按编号删除、撤销和重做，误删意见也可恢复；保存冲突按文字、时间和画面逐条比较。
+
+导出的 `返修清单.html` 可直接阅读，图片上带编号框和对应意见，同时保留原图与结构化记录。常用笔记本尺寸下，播放、标记和意见输入可同屏操作。操作方法见[完整使用说明](skill/README.md)，Agent 的接手、进度和自检方法见[返修流程](skill/references/repair-loop.md)。
 
 ## 接进 Agent 的出片流程
 
@@ -122,7 +128,7 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 
 ```sh
 npm test
-npm run build:skill -- --out release/media-review-0.3.0-beta.4
+npm run build:skill -- --out release/media-review-0.3.0-beta.5
 ```
 
 测试使用隔离目录，不需要真实用户媒体。构建命令生成完整 Skill 文件夹；它不执行安装、不上传或创建 GitHub Release，输出目录已存在时不会覆盖。安装包会保留自有源码许可与第三方声明。目录关系、测试范围与安装器参数见[开发说明](docs/development.md)。

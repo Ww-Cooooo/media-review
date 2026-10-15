@@ -15,7 +15,8 @@ interface Props {
 }
 
 export function ReviewHandoffDialog({ handoff, open, copied, copying, copyError, onCopy, onClose, onHome }: Props) {
-  return <Modal open={open && !!handoff} title="意见已保存，可以交给 Agent 了" width={760}
+  const noChanges = handoff?.record.completion?.outcome === 'no-changes';
+  return <Modal open={open && !!handoff} title={noChanges ? '本轮审阅完成，没有意见' : '意见已保存，可以交给 Agent 了'} width={760}
     className="review-handoff-dialog" centered onCancel={onClose}
     footer={<div className="handoff-footer"><div className="handoff-destinations"><Button icon={<ArrowLeftOutlined />} onClick={onClose}>返回当前素材</Button><Button icon={<HomeOutlined />} onClick={onHome}>回到主页</Button></div>
       <Button type="primary" loading={copying} icon={copied ? <CheckOutlined aria-hidden="true" /> : <CopyOutlined aria-hidden="true" />} onClick={onCopy}>
@@ -24,7 +25,7 @@ export function ReviewHandoffDialog({ handoff, open, copied, copying, copyError,
     {handoff && <>
       <p className="handoff-instruction">复制下面的内容，回到 Agent 聊天中粘贴并发送。发送后才会交给 Agent 处理，这里不会自动启动剪辑。</p>
       <div className="handoff-summary"><strong>{handoff.record.media.name}</strong>
-        <div><Tag color="success" icon={<CheckOutlined aria-hidden="true" />}>已保存并回读核对</Tag><span>{handoff.record.notes.length} 条意见 · {formatTime(handoff.record.media.durationMs, false)}</span></div>
+        <div><Tag color="success" icon={<CheckOutlined aria-hidden="true" />}>已保存并回读核对</Tag><span>{noChanges ? '已审阅 · 没有意见' : handoff.record.notes.length + ' 条意见'} · {formatTime(handoff.record.media.durationMs, false)}</span></div>
         <dl><dt>本次保存</dt><dd>{new Date(handoff.savedAt).toLocaleString('zh-CN', { hour12: false })}</dd>
           <dt>记录位置</dt><dd className="handoff-record-path">{handoff.recordPath}</dd></dl>
       </div>

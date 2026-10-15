@@ -17,7 +17,7 @@ function label(value = '', title = false) {
 const sameInput = (a, b) => ['name', 'size', 'type', 'fingerprint', 'source', 'mtimeMs'].every(key => a[key] === b[key]);
 function publicTask(value) {
   const { source, ...media } = value.media;
-  return { id: value.id, title: value.title, label: value.label, status: value.status, createdAt: value.createdAt, updatedAt: value.updatedAt, manual: !source, legacy: !!value.legacy, contentHash: value.contentHash ?? null, media, jobs: value.jobs };
+  return { id: value.id, title: value.title, label: value.label, status: value.status, createdAt: value.createdAt, updatedAt: value.updatedAt, manual: !source, legacy: !!value.legacy, contentHash: value.contentHash ?? null, media, jobs: value.jobs, version: value.version ?? { workId: value.id, parentTaskId: null, number: 1 }, archivedAt: value.archivedAt ?? null, lastOpenedAt: value.lastOpenedAt ?? null };
 }
 
 export class ReviewTasks {
@@ -78,12 +78,16 @@ export class ReviewTasks {
     const value = await readJson(path.join(await this.directoryFor(id), 'task.json'), 16_384);
     if (value.format !== 'media-review-task/v1' || value.id !== id || !['waiting', 'closed', 'legacy'].includes(value.status) || !value.jobs || !value.media) throw new ReviewError('任务登记格式不可读，原内容保留');
     taskIdentity(value.id); validateFingerprint(value.media.fingerprint); label(value.title, true); label(value.label);
+    if (value.version) { taskIdentity(value.version.workId); if (value.version.parentTaskId !== null) taskIdentity(value.version.parentTaskId); if (!Number.isSafeInteger(value.version.number) || value.version.number < 1) throw new ReviewError('作品版本信息不可读，原内容保留'); }
     if (value.contentHash !== undefined && !/^[a-f0-9]{64}$/u.test(value.contentHash)) throw new ReviewError('任务内容摘要无效，原资料保留');
     return value;
   }
-  list({ offset = 0, limit = 20, closed = false } = {}) {
+  list({ offset = 0, limit = 20, closed = false, query = '', filter = '', sort = 'created' } = {}) {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50 || typeof closed !== 'boolean') throw new ReviewError('任务分页无效', 'invalid_task', 400);
-    const items = [...this.headers.values()].filter(item => closed || item.status === 'waiting').sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+    if (typeof query !== 'string' || query.length > 160) throw new ReviewError('搜索内容过长', 'invalid_task', 400);
+    if (!['', 'all', 'waiting', 'closed', 'archived'].includes(filter) || !['created', 'opened'].includes(sort)) throw new ReviewError('筛选或排序无效', 'invalid_task', 400);
+    const words = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+    const items = [...this.headers.values()].filter(item => (filter === 'all' || filter === 'archived' ? filter === 'all' || !!item.archivedAt : !item.archivedAt && (filter ? item.status === filter : closed || item.status === 'waiting')) && words.every(word => [item.title, item.label, item.media.name, item.id].join(' ').toLocaleLowerCase().includes(word))).sort((a, b) => (sort === 'opened' ? (b.lastOpenedAt ?? '').localeCompare(a.lastOpenedAt ?? '') : 0) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
     return { items: items.slice(offset, offset + limit), total: items.length, active: this.activeCount, warnings: this.warnings.slice(0, 10) };
   }
   async registerSource(source, options = {}) {
@@ -107,19 +111,22 @@ export class ReviewTasks {
     const legacy = !newTask && (!!await fs.lstat(legacyFile).catch(() => null) || !!await fs.lstat(legacyDraft).catch(() => null));
     return this.create(media, { ...options, legacy });
   }
-  async create(media, { requestId = randomUUID(), title = media.name, label: origin = '', legacy = false, status = 'waiting', createdAt = new Date().toISOString() } = {}) {
+  async create(media, { requestId = randomUUID(), title = media.name, label: origin = '', legacy = false, status = 'waiting', createdAt = new Date().toISOString(), previousTaskId = null } = {}) {
     const id = taskIdentity(requestId); label(title, true); label(origin);
     return this.serial('registry', async () => {
       if (this.headers.has(id)) {
         const existing = await this.read(id);
-        if (!sameInput(existing.media, media) || existing.title !== title || existing.label !== origin) throw new ReviewError('同一请求标识已绑定另一份素材或来源，未覆盖原任务', 'task_conflict');
+        if (!sameInput(existing.media, media) || existing.title !== title || existing.label !== origin || (existing.version?.parentTaskId ?? null) !== previousTaskId) throw new ReviewError('同一请求标识已绑定另一份素材或来源，未覆盖原任务', 'task_conflict');
         return publicTask(existing);
       }
       if (status === 'waiting' && this.activeCount >= this.maxActive || this.recordCount >= this.maxRecords) throw new ReviewError('待校对任务或登记总量已达上限，请先结束不再等待的任务；资料不会自动删除。', 'task_capacity', 429);
+      const previous = previousTaskId ? await this.read(taskIdentity(previousTaskId)) : null;
+      const workId = previous?.version?.workId ?? previous?.id ?? id;
+      const number = previous ? Math.max(previous.version?.number ?? 1, ...[...this.headers.values()].filter(item => item.version.workId === workId).map(item => item.version.number)) + 1 : 1;
       const directory = path.join(this.directory, id);
       await fs.mkdir(directory); // 不认领碰撞、未知或损坏的已有目录。
       const at = new Date().toISOString();
-      const value = { format: 'media-review-task/v1', id, title, label: origin, createdAt, updatedAt: at, status, legacy, media, jobs: {} };
+      const value = { format: 'media-review-task/v1', id, title, label: origin, createdAt, updatedAt: at, status, legacy, media, jobs: {}, version: { workId, parentTaskId: previousTaskId, number } };
       await atomicJson(path.join(directory, 'task.json'), value);
       this.recordCount++; this.remember(value); return publicTask(value);
     });
@@ -142,7 +149,19 @@ export class ReviewTasks {
   async changeStatus(id, status) {
     if (!['waiting', 'closed'].includes(status)) throw new ReviewError('任务状态无效', 'invalid_task', 400);
     if (status === 'waiting' && this.headers.get(id)?.status !== 'waiting' && this.activeCount >= this.maxActive) throw new ReviewError('待校对任务已满，请先结束另一任务', 'task_capacity', 429);
-    return this.patch(id, { status });
+    return this.patch(id, { status, ...(status === 'waiting' ? { archivedAt: null } : {}) });
+  }
+  async organize(id, action, title) {
+    if (action === 'rename') { label(title, true); if (!title.trim()) throw new ReviewError('任务名称不能为空', 'invalid_task', 400); return this.patch(id, { title: title.trim() }); }
+    if (action === 'opened') return this.patch(id, { lastOpenedAt: new Date().toISOString() });
+    if (action === 'archive') { const current = await this.read(id); if (current.archivedAt) return publicTask(current); return this.patch(id, { archivedAt: new Date().toISOString(), beforeArchive: current.status, status: 'closed' }); }
+    if (action === 'restore') { const current = await this.read(id); if (!current.archivedAt) return publicTask(current); return this.patch(id, { archivedAt: null, status: 'closed' }); }
+    throw new ReviewError('整理操作无效', 'invalid_task', 400);
+  }
+  versions(id) {
+    const current = this.headers.get(taskIdentity(id));
+    if (!current) throw new ReviewError('任务不存在', 'invalid_task', 404);
+    return [...this.headers.values()].filter(item => item.version.workId === current.version.workId).sort((a, b) => a.version.number - b.version.number);
   }
   async scope(id, fingerprint) {
     if (id === null || id === undefined) return this.legacyReviews;

@@ -1,5 +1,8 @@
 export const REVIEW_FORMAT = 'ai-carry-media-review/v1' as const;
 export const REFERENCE_FORMAT = 'ai-carry-media-review/v2' as const;
+export const REGIONS_FORMAT = 'ai-carry-media-review/v3' as const;
+export const FLOW_FORMAT = 'ai-carry-media-review/v4' as const;
+export const COMPLETE_FORMAT = 'ai-carry-media-review/v5' as const;
 
 export type ReviewKind = 'modify' | 'keep' | 'discuss';
 export type ReviewMode = 'point' | 'range';
@@ -10,6 +13,12 @@ export interface Rect {
   y: number;
   width: number;
   height: number;
+}
+
+export interface FrameRegion { id: number; rect: Rect; text?: string }
+// Older notes and recovery drafts retain their original single-rectangle data.
+export function regionsOf(value: { regions?: FrameRegion[]; rect?: Rect | null }): FrameRegion[] {
+  return value.regions ?? (value.rect ? [{ id: 1, rect: value.rect }] : []);
 }
 
 export interface MediaIdentity {
@@ -30,18 +39,22 @@ export interface FrameReference {
 export interface ReviewNote {
   id: string;
   kind: ReviewKind;
-  startMs: number;
+  startMs: number | null;
+  scope?: 'whole';
+  regionSerial?: number;
   endMs: number | null;
   text: string;
-  rect: Rect | null;
+  rect?: Rect | null;
+  regions?: FrameRegion[];
   topic?: ReviewTopic | null;
   reference?: FrameReference | null;
 }
 
 export interface ReviewRecord {
-  format: typeof REVIEW_FORMAT | typeof REFERENCE_FORMAT;
+  format: typeof REVIEW_FORMAT | typeof REFERENCE_FORMAT | typeof REGIONS_FORMAT | typeof FLOW_FORMAT | typeof COMPLETE_FORMAT;
   media: MediaIdentity;
   notes: ReviewNote[];
+  completion?: { outcome: 'no-changes' | 'with-notes'; completedAt: string } | null;
 }
 
 export const KIND_LABEL: Record<ReviewKind, string> = {
@@ -83,7 +96,7 @@ export function clampMs(value: number, durationMs: number): number {
 }
 
 export function sortedNotes(notes: ReviewNote[]): ReviewNote[] {
-  return [...notes].sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+  return [...notes].sort((a, b) => (a.startMs ?? -1) - (b.startMs ?? -1) || a.id.localeCompare(b.id));
 }
 
 export async function fingerprintFile(file: File): Promise<string> {
