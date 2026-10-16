@@ -5,13 +5,16 @@
 .marking-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .marking-actions small { align-self: center; font-size: 12px; color: #75634d; }
 .marking-actions .ant-btn-dangerous { color: #a6342e; border-color: #d5aaa1; background: #fff9f5; }
-.opinion-scopes, .region-history { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
-.opinion-scopes { gap: 4px; max-height: 100px; overflow: auto; padding: 2px; }
-.opinion-scopes .ant-btn { padding-inline: 4px; gap: 4px; }
-.opinion-scopes > .ant-btn { height: 30px; }
-.opinion-scope-hint { margin: 6px 0; color: #75634d; font-size: 12px; line-height: 1.6; }
+.region-locations, .region-history { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.region-locations { max-height: 100px; overflow: auto; padding: 2px; }
+.region-locations .ant-btn { padding-inline: 7px; gap: 4px; }
+.region-comment-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.region-comment-navigation .ant-select { min-width: 130px; flex: 1; }
+.opinion .region-comment-entry, .region-comment-navigation > .ant-btn { padding-inline: 0; font-size: 12px; }
+.opinion .region-comment-entry { margin-top: 4px; white-space: normal; height: auto; }
+.opinion-scope-hint { margin: 0 0 6px; color: #75634d; font-size: 12px; line-height: 1.6; }
+.region-comment-navigation + .opinion-scope-hint { margin-top: 6px; }
 .comment-heading { display: block; margin-bottom: 3px; font-size: 13px; }
-.comment-filled { display: inline-block; width: 5px; height: 5px; margin-left: 4px; border-radius: 50%; vertical-align: middle; background: currentColor; }
 .region-chip { display: inline-flex; align-items: center; border: 1px solid #cbb99e; border-radius: 5px; background: #f5eddf; }
 .region-chip.is-active { border-color: #9b5838; background: #f3dfc9; }
 .region-chip .ant-btn { border-radius: 0; height: 28px; }

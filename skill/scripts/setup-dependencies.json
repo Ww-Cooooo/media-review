@@ -1,5 +1,5 @@
 {
-  "release": "0.3.0-beta.8",
+  "release": "0.3.0-beta.9",
   "node": {
     "version": "24.16.0",
     "url": "https://nodejs.org/download/release/v24.16.0/win-x64/node.exe",

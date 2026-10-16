@@ -1,6 +1,6 @@
 # Windows 安装与首次校对
 
-本说明对应 **0.3.0-beta.8 Windows 预发布版**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.8)下载完整 ZIP 及校验文件。本版补齐由 Agent 负责的首次下载、配置、真实字幕测试和开页；此前的标注、版本返修、逐条复核与小电视图标继续保留。完整包包含 `skill-package.json`、`app/`、`scripts/`、SKILL.md、README 和安装入口。宿主若只安装仓库的整个 `skill/`，首次入口会自动取得对应版本的完整包；旧安装不会被静默升级。
+本说明对应 **0.3.0-beta.9 Windows 预发布版**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.9)下载完整 ZIP 及校验文件。本版补齐由 Agent 负责的首次下载、配置、真实字幕测试和开页；此前的标注、版本返修、逐条复核与小电视图标继续保留。完整包包含 `skill-package.json`、`app/`、`scripts/`、SKILL.md、README 和安装入口。宿主若只安装仓库的整个 `skill/`，首次入口会自动取得对应版本的完整包；旧安装不会被静默升级。
 
 ## 由 Agent 完成首次准备
 
