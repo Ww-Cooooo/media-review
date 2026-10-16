@@ -44,8 +44,11 @@ type Action = { type: 'new' } | { type: 'target'; mode: TargetMode; position: nu
 const MODE_LABEL = { point: '时间点', range: '时间段', frame: '画面位置', whole: '整片意见' };
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 function fromNote(note: ReviewNote): ReviewDraft {
+  const regions = regionsOf(note);
+  // Region-only notes use this compatibility summary on disk, not as user input.
+  const text = note.text === '见各编号区域说明' && regions.some(region => region.text?.trim()) ? '' : note.text;
   return { id: note.id, mode: note.scope === 'whole' ? 'whole' : note.endMs !== null ? 'range' : note.reference && regionsOf(note).length ? 'frame' : 'point', kind: note.kind, topic: note.topic ?? null,
-    startText: note.startMs === null ? '' : formatTime(note.startMs), endText: note.endMs === null ? '' : formatTime(note.endMs), text: note.text, regions: regionsOf(note), ...(note.regionSerial !== undefined ? { regionSerial: note.regionSerial } : {}),
+    startText: note.startMs === null ? '' : formatTime(note.startMs), endText: note.endMs === null ? '' : formatTime(note.endMs), text, regions, ...(note.regionSerial !== undefined ? { regionSerial: note.regionSerial } : {}),
     frameMs: note.reference?.frameMs ?? null, reference: note.reference ?? null, snapshot: null };
 }
 
@@ -130,14 +133,18 @@ export function ReviewDesk() {
   const analysis = useMediaAnalysis(media?.file ?? null, durationMs, editing && !!activeTask && service.state === 'online' && screen === 'review', activeTask && media?.local ? { ...activeTask, manual: true } : activeTask);
   const progress = useReviewProgress(activeTask?.id, service.state === 'online', recordRevision);
   const ordered = useMemo(() => sortedNotes(notes).filter(note => (!noteQuery || [note.text, ...regionsOf(note).map(region => region.text ?? ''), progress.bundle?.statuses[note.id]?.latest?.text ?? ''].join(' ').toLocaleLowerCase().includes(noteQuery.toLocaleLowerCase())) && (!topicFilter || note.topic === topicFilter) && (!progressFilter || (progress.bundle?.statuses[note.id]?.status ?? (note.kind === 'discuss' ? 'clarify' : 'pending')) === progressFilter)), [notes, noteQuery, topicFilter, progressFilter, progress.bundle]);
-  function focusRegion(id: number) { setSelectedRegion(id); setTimeout(() => root.current?.querySelector<HTMLElement>(`[data-region-comment="${id}"]`)?.scrollIntoView({ block: 'nearest' }), 0); }
+  function focusRegion(id: number) { setSelectedRegion(id); setTimeout(() => root.current?.querySelector<HTMLElement>(view.kind === 'detail' ? `[data-region-comment="${id}"]` : '#opinion-text')?.scrollIntoView({ block: 'nearest' }), 0); }
   function nextIssue() { if (!ordered.length) return; const index = ordered.findIndex(note => view.kind !== 'new' && note.id === view.id); showNote(ordered[(index + 1) % ordered.length]); }
-  useEffect(() => { setSelectedRegion(null); }, [view.kind, view.kind === 'new' ? '' : view.id]);
+  useEffect(() => {
+    const note = view.kind !== 'new' ? notes.find(item => item.id === view.id) : null;
+    setSelectedRegion(note && !fromNote(note).text.trim() ? regionsOf(note).find(region => region.text?.trim())?.id ?? null : null);
+  }, [activeTask?.id, view.kind, view.kind === 'new' ? '' : view.id]);
   useEffect(() => { setNoteQuery(''); setTopicFilter(''); setProgressFilter(''); setImportedCues(null); if (activeTask) void organizeTasks([activeTask.id], 'opened').catch(() => {}); }, [activeTask?.id]);
   const selected = view.kind !== 'new' ? notes.find(note => note.id === view.id) : null;
   const draft = view.kind === 'detail' && selected ? fromNote(selected) : view.kind === 'edit' ? editDraft : newDraft;
   const reading = view.kind === 'detail';
   const regions = regionsOf(draft);
+  const commentRegion = regions.find(region => region.id === selectedRegion);
   const regionHistory = useRegionHistory(`${activeTask?.id}:${view.kind}:${draft.id}:${draft.frameMs}`);
   useEffect(() => { setClearedMarks(null); }, [activeTask?.id, view.kind, draft.id]);
   useEffect(() => { setDeletedNotes([]); setCompletion(null); }, [media?.url]);
@@ -543,7 +550,7 @@ export function ReviewDesk() {
       focusOpinion(); return;
     }
     setSelecting(null); setView({ kind: 'new' }); setEditDraft(emptyDraft());
-    if (action.type === 'new') { regionHistory.clear(); setClearedMarks(null); setNewDraft(emptyDraft()); focusOpinion(); return; }
+    if (action.type === 'new') { regionHistory.clear(); setClearedMarks(null); setSelectedRegion(null); setNewDraft(emptyDraft()); focusOpinion(); return; }
     const value: ReviewDraft = { ...(!newDraft.mode && hasDraftWork(newDraft) ? newDraft : emptyDraft()), mode: action.mode, startText: action.mode === 'whole' ? '' : formatTime(action.cue?.startMs ?? action.position), endText: action.cue ? formatTime(action.cue.endMs) : '', frameMs: action.mode === 'frame' ? action.position : null };
     setNewDraft(value); setClearedMarks(null); invalidate();
     if (action.marker) return; // A start mark must not stop playback or move focus.
@@ -650,7 +657,7 @@ export function ReviewDesk() {
       activity.current = { ...activity.current, unsaved: remainingDrafts.some(hasDraftWork), workspace: cleared };
       setParked(remainingDrafts);
       setNotes(receipt.record.notes); setBaseNotes(receipt.record.notes); setRecordRevision(receipt.revision ?? null); setConflict(null); setRecordPath(receipt.recordPath); setDirty(false);
-      setNewDraft(emptyDraft()); setEditDraft(emptyDraft()); setView({ kind: 'new' }); setSelecting(null); setSaved(true);
+      setNewDraft(emptyDraft()); setEditDraft(emptyDraft()); setView({ kind: 'new' }); setSelecting(null); setSelectedRegion(null); setSaved(true);
       setCompletion(receipt.record.completion ?? null); regionHistory.clear(); setClearedMarks(null);
       setHandoff(null); setHandoffOpen(false);
       if (finish && receipt.revision) { try { const round = await createHandoffRound(activeTask.id, receipt.revision); setHandoff(createReviewHandoff({ ...receipt, recordPath: round.recordPath }, round)); setHandoffOpen(true); } catch (cause) { setFeedback('意见已保存，但固定交接未完成：' + (cause instanceof Error ? cause.message : '请重试完成审阅')); } } setCopied(false); setCopyError(''); setPending(null);
@@ -855,36 +862,45 @@ export function ReviewDesk() {
   </div>;
   const composition = <section className="opinion" aria-label="常驻意见栏">
     <div className="opinion-head"><h2>{reading ? '意见详情' : view.kind === 'edit' ? '修改这条意见' : '写下这条意见'}</h2><Tag>{reading ? KIND_LABEL[draft.kind] : view.kind === 'edit' ? '正在编辑' : '新意见'}</Tag></div>
-    <p className="opinion-instruction">{reading ? '已定位这条意见；查看不会覆盖你的新草稿。' : '先写想法也可以，再选位置。目标不会随播放变化。'}</p>
-    {!reading && <Button className="whole-comment" size="small" type={draft.mode === 'whole' ? 'primary' : 'default'} disabled={locked} onClick={() => requestTarget('whole')}>整片意见 · 不限时间</Button>}
+    {(reading || !draft.mode) && <p className="opinion-instruction">{reading ? '已定位这条意见；查看不会覆盖你的新草稿。' : '先写想法也可以，再选位置。目标不会随播放变化。'}</p>}
+    {!reading && !draft.mode && <Button className="whole-comment" size="small" disabled={locked} onClick={() => requestTarget('whole')}>整片意见 · 不限时间</Button>}
     {reference}{imageError && <p className="save-error" role="alert">{imageError}</p>}
     {!reading && (draft.mode || regions.length > 0 || clearedMarks) && <div className="marking-actions">
       <Button size="small" danger icon={<DeleteOutlined />} disabled={locked || !(draft.mode || regions.length || draft.reference || draft.snapshot)} onClick={() => clearMarks()}>清空本条全部标记</Button>
       {clearedMarks && <Button size="small" icon={<UndoOutlined />} disabled={locked} onClick={restoreClearedMarks}>恢复刚清空的标记</Button>}
       <small>{clearedMarks ? '标记已清空，意见文字保留。重新标记前可恢复。' : '保留意见文字'}</small>
     </div>}
-    {reading ? <><div className="note-read-text">{draft.text}</div>{draft.topic && <p className="note-safe">问题类别：{TOPIC_LABEL[draft.topic]}</p>}
+    {reading ? <>{draft.text && <div className="note-read-text">{regions.length > 0 && <strong className="comment-heading">统一说明</strong>}{draft.text}</div>}
+      {regions.length > 0 && <div className="region-comments" aria-label="各框意见">{regions.map(region => <div key={region.id} data-region-comment={region.id} className={selectedRegion === region.id ? 'is-active' : ''}><Button size="small" type={selectedRegion === region.id ? 'primary' : 'default'} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null) { player.current?.pause(); seek(draft.frameMs); } }}>框 {region.id}</Button><p>{region.text || (draft.text ? '沿用统一说明' : '未单独填写')}</p></div>)}</div>}
+      {draft.topic && <p className="note-safe">问题类别：{TOPIC_LABEL[draft.topic]}</p>}
       <div className="note-footer"><Button type="primary" icon={<EditOutlined />} disabled={locked || service.state !== 'online'} onClick={() => { if (!selected) return; setEditDraft(fromNote(selected)); setView({ kind: 'edit', id: selected.id }); setFeedback(''); focusOpinion(); }}>修改这条意见</Button>
         {(hasDraftWork(newDraft) || parked.length > 0) && <Button onClick={() => request({ type: 'restore' })}>返回未保存草稿</Button>}</div></> : <Form layout="vertical" onFinish={() => void save()} disabled={locked}>
       <Form.Item className="kind-field" label="意见类型"><Segmented block aria-label="意见类型" value={draft.kind} options={Object.entries(KIND_LABEL).map(([value, label]) => ({ value, label }))} onChange={value => patch({ kind: value as ReviewDraft['kind'] })} /></Form.Item>
-      <details className="note-options"><summary>调整时间／选择问题类别</summary>{draft.mode !== 'whole' && <div className="time-input-row"><Form.Item label={draft.mode === 'range' ? '开始时间' : '标注时间'}><Input aria-label="开始时间" value={draft.startText} placeholder="00:00.000" disabled={!draft.mode || draft.mode === 'frame' || locked} onChange={event => patch({ startText: event.target.value })} /></Form.Item>
+      <details className="note-options"><summary>调整位置／问题类别</summary>{draft.mode && <Button className="whole-comment" size="small" type={draft.mode === 'whole' ? 'primary' : 'default'} onClick={() => requestTarget('whole')}>整片意见 · 不限时间</Button>}{draft.mode !== 'whole' && <div className="time-input-row"><Form.Item label={draft.mode === 'range' ? '开始时间' : '标注时间'}><Input aria-label="开始时间" value={draft.startText} placeholder="00:00.000" disabled={!draft.mode || draft.mode === 'frame' || locked} onChange={event => patch({ startText: event.target.value })} /></Form.Item>
         {draft.mode === 'range' && <Form.Item label="结束时间"><Input aria-label="结束时间" value={draft.endText} placeholder="00:00.000" onChange={event => patch({ endText: event.target.value })} /></Form.Item>}</div>}
       {draft.mode === 'range' && <div className="capture-row"><Button type="link" size="small" onClick={() => patch({ startText: formatTime(actualTime()) })}>设当前为开始</Button><Button type="link" size="small" onClick={() => patch({ endText: formatTime(actualTime()) })}>设当前为结束</Button></div>}
       <Form.Item label="问题类别（可选）"><Select aria-label="问题类别" allowClear value={draft.topic ?? undefined} placeholder="画面、字幕、声音、节奏…" options={Object.entries(TOPIC_LABEL).filter(([key]) => !media?.isAudio || key !== 'visual').map(([value, label]) => ({ value, label }))} onChange={value => patch({ topic: (value ?? null) as ReviewTopic | null })} /></Form.Item></details>
-      <Form.Item label="你的意见" htmlFor="opinion-text"><Input.TextArea id="opinion-text" aria-label="你的意见" value={draft.text} maxLength={2000} autoSize={{ minRows: 3, maxRows: 7 }} placeholder={regions.length ? '按画面编号说明，例如：1：字幕遮挡；2：人物位置；3：多余元素。' : '这段画面、声音、字幕或节奏，希望怎么改？'} onChange={event => patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} /></Form.Item>
-      <Button className="save-note" block type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online' || !!problem}>{selecting === 'frame' ? '完成框选并保存意见' : view.kind === 'edit' ? '保存这条修改' : '保存这条意见'}</Button>
+      <Form.Item label={commentRegion ? `框 ${commentRegion.id} 的意见` : regions.length ? '统一说明' : '你的意见'} htmlFor="opinion-text">
+        {regions.length > 0 && <>
+          <div className="opinion-scopes" role="group" aria-label="选择意见填写对象">
+            <Button size="small" type={!commentRegion ? 'primary' : 'default'} aria-pressed={!commentRegion} onClick={() => { setSelectedRegion(null); focusOpinion(); }}><span>统一说明{draft.text.trim() && <span className="comment-filled" title="已有文字" aria-label="已有文字" />}</span></Button>
+            {regions.map(region => <span className={`region-chip${commentRegion?.id === region.id ? ' is-active' : ''}`} key={region.id}>
+              <Button size="small" type="text" aria-pressed={commentRegion?.id === region.id} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null && !atReference) { player.current?.pause(); seek(draft.frameMs); } focusOpinion(); }}><span>框 {region.id}{region.text?.trim() && <span className="comment-filled" title="已有文字" aria-label="已有文字" />}</span></Button>
+              <Button size="small" type="text" danger icon={<CloseOutlined />} aria-label={`删除框 ${region.id}`} title={`删除框 ${region.id}`} onClick={() => { patch({ regions: regions.filter(item => item.id !== region.id) }); if (selectedRegion === region.id) setSelectedRegion(null); }} />
+            </span>)}
+          </div>
+          <p id="opinion-scope-hint" className="opinion-scope-hint">统一说明适用于本条所有标记；不同问题可选框号分别写。任选一处填写即可保存。</p>
+        </>}
+        <Input.TextArea id="opinion-text" aria-label={commentRegion ? `框 ${commentRegion.id} 的意见` : regions.length ? '统一说明' : '你的意见'} aria-describedby={regions.length ? 'opinion-scope-hint' : undefined} value={commentRegion ? commentRegion.text ?? '' : draft.text} maxLength={2000} autoSize={{ minRows: regions.length ? 2 : 3, maxRows: 7 }} placeholder={commentRegion ? `框 ${commentRegion.id} 这里有什么问题，希望怎么改？` : '这段画面、声音、字幕或节奏，希望怎么改？'} onChange={event => commentRegion ? patch({ regions: regions.map(region => region.id === commentRegion.id ? { ...region, text: event.target.value } : region) }, false) : patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} />
+      </Form.Item>
+      <Button className="save-note" block type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online' || !!problem}>{selecting === 'frame' ? '完成框选并保存整条意见' : view.kind === 'edit' ? '保存这条修改' : '保存整条意见'}</Button>
       <p className="note-safe" role="status">{service.state !== 'online' ? '连接不可用，当前无法保存。输入仍在本页，请按上方提示重新打开校对室。' : !editing ? '本窗口只读；明确取得编辑权后才能保存，当前输入仍保留。' : problem || '可保存；写入并回读确认后，进入空白新意见。'}</p>
       {view.kind === 'edit' && <Button type="link" disabled={locked || service.state !== 'online'} onClick={() => selected && request({ type: 'detail', note: selected })}>取消编辑，查看原意见</Button>}
     </Form>}
     {!reading && (regions.length > 0 || regionHistory.canUndo || regionHistory.canRedo) && <div className="region-edit-tools" aria-label="画面框操作">
-      <div className="region-chips">{regions.map(region => <span className={`region-chip${selectedRegion === region.id ? ' is-active' : ''}`} key={region.id}>
-        <Button size="small" type="text" disabled={locked} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null && !atReference) { player.current?.pause(); seek(draft.frameMs); } }}>框 {region.id}</Button>
-        <Button size="small" type="text" danger icon={<CloseOutlined />} disabled={locked} aria-label={`删除框 ${region.id}`} title={`删除框 ${region.id}`} onClick={() => { patch({ regions: regions.filter(item => item.id !== region.id) }); if (selectedRegion === region.id) setSelectedRegion(null); }} />
-      </span>)}</div>
       <div className="region-history"><Button size="small" icon={<UndoOutlined />} disabled={locked || !regionHistory.canUndo} onClick={() => undoRegion()}>撤回上一步框选</Button><Button size="small" icon={<RedoOutlined />} disabled={locked || !regionHistory.canRedo} onClick={() => undoRegion(true)}>恢复上一步框选</Button></div>
       <small>只撤回或恢复画面框的新增、移动和删除；时间、意见文字不变。</small>
     </div>}
-    {regions.length > 0 && <div className="region-comments" aria-label="按编号填写画面说明">{regions.map(region => <div key={region.id} data-region-comment={region.id} className={selectedRegion === region.id ? 'is-active' : ''}><Button size="small" type={selectedRegion === region.id ? 'primary' : 'default'} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null) { player.current?.pause(); seek(draft.frameMs); } }}>框 {region.id}</Button>{reading ? <p>{region.text || '见上方共用意见'}</p> : <Input.TextArea aria-label={`框 ${region.id} 的说明`} placeholder="可选：单独说明此处；留空沿用共用意见" value={region.text ?? ''} maxLength={2000} autoSize={{ minRows: 1, maxRows: 3 }} disabled={locked} onFocus={() => setSelectedRegion(region.id)} onChange={event => patch({ regions: regions.map(item => item.id === region.id ? { ...item, text: event.target.value } : item) }, false)} />}</div>)}</div>}
     {reading && selected && <RepairPanel note={selected} bundle={progress.bundle} disabled={locked || dirty} onRefresh={progress.refresh} onOpen={task => request({type:'task',task,readOnly:task.status !== 'waiting'})} />}
     {regions.length > 0 && <details className="coordinate-details"><summary>画面区域 · {regions.length} 处</summary>
       {regions.map(region => <div className="region-coordinate" key={region.id}><strong>区域 {region.id}</strong><div className="coordinate-fields">{(['x', 'y', 'width', 'height'] as const).map((key, index) => <label key={key}>{['横向', '纵向', '宽', '高'][index]}<Input aria-label={'区域' + region.id + '画面' + key} value={(region.rect[key] * 100).toFixed(1)} suffix="%" readOnly={reading || locked} onChange={event => {
@@ -900,7 +916,7 @@ export function ReviewDesk() {
   const pendingProblem = pendingDrafts.filter(hasDraftWork).map(value => draftProblem(value, durationMs, selectionBlocksSave)).find(Boolean) ?? '';
   const taskPanel = <ReviewTasks data={tasks.data} error={tasks.error} currentId={activeTask?.id ?? null} page={tasks.page} includeClosed={tasks.closed} query={tasks.query} onQuery={tasks.setQuery} online={service.state === 'online'} filter={tasks.filter} sort={tasks.sort} onFilter={tasks.setFilter} onSort={tasks.setSort} onPage={tasks.setPage} onClosed={tasks.setClosed} onRefresh={() => void tasks.refresh()} onOpen={task => request({ type: 'task', task })} onSelectFile={task => chooseFile(undefined, task)} onNew={() => chooseFile(undefined, null, true)} onStatus={(task, status) => void taskStatus(task, status)} />;
   const otherTasks = Math.max(0, (tasks.data?.active ?? 0) - (activeTask?.status === 'waiting' ? 1 : 0));
-  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="review-0-3-0-beta-7">
+  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="review-0-3-0-beta-8">
     <header className="brandbar"><div className="brand"><img src="/brand/review-mark.svg" alt="Media Review" /><strong>Media Review</strong><span className="tool-name">音视频校对</span></div>
       <div className="brand-actions"><Button onClick={() => setReadinessOpen(true)}>本机可用性</Button>{activeTask && <Button onClick={() => setVersionOpen(true)}>版本与返修 · V{activeTask.version?.number ?? 1}</Button>}<span className="service-status-actions"><ServiceBadge state={service.state} />{service.state !== 'online' && service.state !== 'connecting' && <ServiceRecoveryButton compact state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />}</span><Badge count={tasks.data?.active ?? 0} color="#a76543"><Button onClick={() => setTasksOpen(true)}>校对任务</Button></Badge><Dropdown trigger={['click']} menu={{ items: [...(media ? [{ key: 'suspend', label: '挂起当前任务 · 释放媒体' }, { key: 'end', label: '结束当前任务 · 保留历史' }, { type: 'divider' as const }] : []), { key: 'restart', label: '重启校对服务', disabled: service.state !== 'online' || !!recoveryWait || !!busy }, { key: 'exit', label: '退出整个校对室', danger: true }], onClick: ({ key }) => { if (key === 'suspend') request({ type: 'suspend' }); else if (key === 'end') request({ type: 'end' }); else if (key === 'restart') void requestRestart(); else request({ type: 'exit' }); } }}><Button disabled={busy === 'saving'}>任务操作</Button></Dropdown><span className="privacy"><SafetyCertificateOutlined />素材留在本机</span>{media && <><span className="save-indicator" role="status">{stateLabel}</span><Button icon={screen === 'home' ? <ArrowLeftOutlined /> : <HomeOutlined />} disabled={busy === 'saving'} onClick={() => navigate(screen === 'home' ? 'review' : 'home')}>{screen === 'home' ? '返回当前素材' : '回到主页'}</Button></>}<Button icon={<FolderOpenOutlined />} disabled={busy === 'saving'} onClick={() => chooseFile()}>打开其他素材</Button>{media && <Button className="save-button" icon={<SaveOutlined />} disabled={locked || service.state !== 'online'} loading={busy === 'saving'} onClick={() => void save()}>保存进度</Button>}{media && <Button type="primary" icon={<CommentOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online'} onClick={() => void save(true)}>{!notes.length && !hasDraftWork(newDraft) && !editChanged && !parked.some(hasDraftWork) ? '审阅完毕，没有意见' : '完成审阅并交接'}</Button>}</div>
       <input ref={fileInput} type="file" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) { const task = chosenManualTask.current, newTask = chosenNewTask.current, readOnly = chosenReadOnly.current; chosenManualTask.current = null; chosenNewTask.current = false; chosenReadOnly.current = false; request({ type: 'file', file, newTask, readOnly, ...(task ? { task } : {}) }); } }} />

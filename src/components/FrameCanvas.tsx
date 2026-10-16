@@ -49,6 +49,7 @@ export function FrameCanvas({ regions, regionSerial, drawing, onChange, onDone, 
         }
         const active = callbacks.current.selected;
         if (!callbacks.current.drawing && active && shapes.has(active)) canvas.setActiveObject(shapes.get(active)!);
+        else if (!active) canvas.discardActiveObject();
         canvas.requestRenderAll();
       };
       render(); canvas.skipTargetFind = drawing;

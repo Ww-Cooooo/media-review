@@ -5,11 +5,17 @@
 .marking-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .marking-actions small { align-self: center; font-size: 12px; color: #75634d; }
 .marking-actions .ant-btn-dangerous { color: #a6342e; border-color: #d5aaa1; background: #fff9f5; }
-.region-chips, .region-history { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.opinion-scopes, .region-history { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.opinion-scopes { gap: 4px; max-height: 100px; overflow: auto; padding: 2px; }
+.opinion-scopes .ant-btn { padding-inline: 4px; gap: 4px; }
+.opinion-scopes > .ant-btn { height: 30px; }
+.opinion-scope-hint { margin: 6px 0; color: #75634d; font-size: 12px; line-height: 1.6; }
+.comment-heading { display: block; margin-bottom: 3px; font-size: 13px; }
+.comment-filled { display: inline-block; width: 5px; height: 5px; margin-left: 4px; border-radius: 50%; vertical-align: middle; background: currentColor; }
 .region-chip { display: inline-flex; align-items: center; border: 1px solid #cbb99e; border-radius: 5px; background: #f5eddf; }
 .region-chip.is-active { border-color: #9b5838; background: #f3dfc9; }
 .region-chip .ant-btn { border-radius: 0; height: 28px; }
-.region-chip .ant-btn-dangerous { border-left: 1px solid #dbc3b0; color: #a6342e; width: 28px; }
+.region-chip .ant-btn-dangerous { border-left: 1px solid #dbc3b0; color: #a6342e; width: 24px; }
 .surface-tools .ant-btn.finish-frame { background: #bce8c5; border-color: #bce8c5; color: #153c25; font-weight: 600; }
 .surface-tools .ant-btn.finish-frame:hover:not(:disabled) { background: #d2f1d8; border-color: #e4fae7; color: #153c25; }
 .surface-tools .ant-btn.cancel-frame, .surface-tools .ant-btn.clear-time { background: #4b2d2c; border-color: #cd9690; color: #ffd5d1; }
@@ -40,7 +46,12 @@
 .target-text .ant-btn { display: inline-flex; margin-right: 10px; padding-block: 1px; }
 .target-text strong { font-size: 16px; }
 .opinion .ant-form-item { margin-bottom: 8px; }
+.opinion .kind-field { margin-top: 8px; }
+.opinion .kind-field .ant-form-item-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; }
+.opinion .kind-field .ant-form-item-label { padding: 0; white-space: nowrap; }
+.opinion-head + .note-target { margin-top: 8px; }
 .note-options { margin-bottom: 8px; padding-bottom: 6px; }
+.note-options[open] > .whole-comment { margin-top: 8px; }
 .opinion textarea.ant-input { line-height: 1.6; }
 .note-safe { margin-top: 6px; font-size: 12px; }
 .project-row .step-line { display: none; }
