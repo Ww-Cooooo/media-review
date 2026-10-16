@@ -1,12 +1,12 @@
 # 把 Media Review 接进 Agent 的出片循环
 
-本文对应0.3.0-beta.5的`media-review-agent/v2`契约，基本异步契约沿用beta.2，任务定位与页面功能沿用beta.3，不适用于旧beta.1的同步回执。Agent需要本机文件／进程权限，并能发现或显式读取Skill；纯网页聊天不能直接执行任意本机命令。校对页唤起已安装的固定本机入口，是另一条需安装配置及可能系统确认的路径，不授予聊天本机执行权限。安装不证明宿主已加载，Skill文本也不能强制所有宿主遵从。
+本文对应0.3.0-beta.6的`media-review-agent/v2`契约，基本异步契约沿用beta.2，任务定位与页面功能沿用beta.3，不适用于旧beta.1的同步回执。Agent需要本机文件／进程权限，并能发现或显式读取Skill；纯网页聊天不能直接执行任意本机命令。校对页唤起已安装的固定本机入口，是另一条需安装配置及可能系统确认的路径，不授予聊天本机执行权限。安装不证明宿主已加载，Skill文本也不能强制所有宿主遵从。
 
 ## 首次接入与核验
 
 以安装器回执给出的完整目录为准，不凭默认位置猜路径。在有本机执行权限的Agent聊天中替换占位符后发送：
 
-> 请读取“<实际Skill目录>/SKILL.md”，将Media Review接入当前剪辑任务。先运行`node scripts/review.mjs doctor`，每个可审版本导出完成后主动执行`after-export --media "<成片绝对路径>" --request-id "<本轮新建并记住的UUID>" --label "<短来源>"`，同次重试沿用该UUID，记住返回的taskId与jobId，并查询真实自检结果。遵从browser回执，不另外新建浏览器窗口来证明送达，不切走用户正在审的片；只报告实际检查过的画面和声音。保留原片与既有版本，不自行发布。
+> 请读取“<实际Skill目录>/SKILL.md”，将Media Review接入当前剪辑任务。首次由你运行`scripts/first-use.cmd --no-browser`，自动补齐运行包、工具和模型并完成真实字幕测试，不把配置交给我。每个可审版本导出完成后执行`scripts/review.cmd after-export --media "<成片绝对路径>" --request-id "<本轮新建并记住的UUID>" --label "<短来源>"`，同次重试沿用该UUID，记住返回的taskId与jobId，并查询真实自检结果。遵从browser回执，不另开窗口证明送达，不切走正在审的片；只报告实际检查过的画面和声音。保留原片与既有版本，不自行发布。
 
 源码方式读取仓库的`skill/SKILL.md`，从仓库根目录用`scripts/review-agent.mjs`替换上述`scripts/review.mjs`。这验证本次接入，不保证所有未来对话自动加载；权限被拒时不能用全局hook绕过。
 
@@ -15,7 +15,7 @@
 成片已经成功导出且写入结束后，从完整Skill目录执行：
 
 ```sh
-node scripts/review.mjs after-export --media "<成片绝对路径>" --request-id "<本轮新建并记住的UUID>" --label "<任务简短来源>"
+scripts/review.cmd after-export --media "<成片绝对路径>" --request-id "<本轮新建并记住的UUID>" --label "<任务简短来源>"
 ```
 
 源码目录使用`scripts/review-agent.mjs`。`request-id`可省略，此时每次调用新建任务；同一次调用重试应沿用UUID，防止重复建任务。新版本或独立意图使用新UUID，不按同名或相同内容合并用户意见。label只写短来源，不扫描聊天历史或放入秘密。
@@ -39,9 +39,9 @@ node scripts/review.mjs after-export --media "<成片绝对路径>" --request-id
 | `inspection.id`、`inspection.state` | 自检作业ID与真实排队／运行状态；不是同步证据 |
 
 ```sh
-node scripts/review.mjs status --task "<taskId>" --job "<jobId>" --result
-node scripts/review.mjs tasks
-node scripts/review.mjs summary
+scripts/review.cmd status --task "<taskId>" --job "<jobId>" --result
+scripts/review.cmd tasks
+scripts/review.cmd summary
 ```
 
 `status`省略job时查该任务最近一次inspection，不用全局current猜对话归属。按状态合理间隔查询，不常驻CLI或忙轮询：
@@ -59,7 +59,7 @@ node scripts/review.mjs summary
 自检失败、中断、未能入队或需要复查时，保留原成片和任务，在完整Skill目录执行：
 
 ```sh
-node scripts/review.mjs self-check --media "<原成片绝对路径>" --request-id "<原taskId>" --label "<原task.label>" --title "<原task.title>"
+scripts/review.cmd self-check --media "<原成片绝对路径>" --request-id "<原taskId>" --label "<原task.label>" --title "<原task.title>"
 ```
 
 这里的占位符来自原回执；标题和来源须与原登记完全相同；原来源为空时省略`--label`，不要传空字符串。当前契约的taskId就是登记requestId。源码入口替换为`scripts/review-agent.mjs`。活动分析返回原job，已终止的分析取得新jobId；完成结果会重新核验完整媒体内容，配置一致时可能复用缓存，不表示强制重跑全部工具。记录新回执再用`status --task ... --job ... --result`查询，不用新UUID掩盖失败。源文件已经变化时应登记新版本，不沿用旧任务。网页波形／台词使用“重新识别台词”重试当前任务，不需要重新送片。
@@ -86,9 +86,9 @@ beta.5 已接入精确轮次、版本关联、逐条处理及用户复核；执�
 ## 取消、结束与退出
 
 ```sh
-node scripts/review.mjs cancel --task "<taskId>" --job "<jobId>"
-node scripts/review.mjs end-task --task "<taskId>" --confirm
-node scripts/review.mjs quit
+scripts/review.cmd cancel --task "<taskId>" --job "<jobId>"
+scripts/review.cmd end-task --task "<taskId>" --confirm
+scripts/review.cmd quit
 ```
 
 取消只撤回该任务的分析需求，其他共享归属可继续。结束任务只结束等待，不删除或认可；有其他窗口使用时拒绝默认结束，先让其保存／挂起，或在用户明确要求后使用`--confirm-other-windows`。
@@ -98,9 +98,9 @@ node scripts/review.mjs quit
 ## 诊断与返修资料包
 
 ```sh
-node scripts/review.mjs doctor
-node scripts/review.mjs self-check --media "<成片绝对路径>"
-node scripts/review.mjs export --task "<taskId>" --fingerprint "<媒体指纹>" --out "<新的输出目录>"
+scripts/review.cmd doctor
+scripts/review.cmd self-check --media "<成片绝对路径>"
+scripts/review.cmd export --task "<taskId>" --fingerprint "<媒体指纹>" --out "<新的输出目录>"
 ```
 
 self-check也走共享队列，默认不开网页。doctor只报告工具可用性与有记录的退出状态，不打印令牌、环境全文或完整进程参数，不下载。异常退出只能记录为原因未确认，不能凭没有退出记录判断用户为什么终止它。

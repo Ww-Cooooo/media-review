@@ -1,31 +1,24 @@
 # Windows 安装与首次校对
 
-本说明对应 **0.3.0-beta.5 Windows预发布完整包**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.5)下载完整ZIP及校验文件。本版新增连续标注、版本返修与逐条复核；安装／初始化入口会为桌面快捷方式配置随包的小电视IP图标，同时保留beta.3的页面重启／本机唤起、分析浮窗定位、任务专属入口和视频放大／全屏；旧安装不会自动升级。源码仓库中的`skill/`只是模板；完整包同时包含`skill-package.json`、`app/`、`scripts/`、SKILL.md、README和安装入口。
+本说明对应 **0.3.0-beta.6 Windows 预发布版**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.6)下载完整 ZIP 及校验文件。本版补齐由 Agent 负责的首次下载、配置、真实字幕测试和开页；此前的标注、版本返修、逐条复核与小电视图标继续保留。完整包包含 `skill-package.json`、`app/`、`scripts/`、SKILL.md、README 和安装入口。宿主若只安装仓库的整个 `skill/`，首次入口会自动取得对应版本的完整包；旧安装不会被静默升级。
 
-## 准备运行环境
+## 由 Agent 完成首次准备
 
-- Node.js 24 或更新版本，用于运行本机服务。从 [Node.js 24 官方下载目录](https://nodejs.org/dist/latest-v24.x/)选择 Windows `.msi` 安装版；常见 x64 电脑选文件名以 `-x64.msi` 结尾的包，ARM64 电脑需对应的 `-arm64.msi`，后者未在本项目完成同等验证。安装时保留 npm 组件，供源码构建使用；完整安装包运行不需要 npm。
-- PowerShell 7 或更新版本，按[微软官方 Windows 安装说明](https://learn.microsoft.com/zh-cn/powershell/scripting/install/install-powershell-on-windows)使用官方安装包。命令是 `pwsh`，它与 Windows PowerShell 5.1 并存，不能用后者代替。
-- Microsoft Edge、Chrome 等支持素材编码的现代浏览器。
+自动准备面向 Windows 10/11 x64、有本机命令权限的 Agent 和 Edge／Chrome。首次需要联网；用户不用先安装 Node.js、PowerShell、识别器或模型。
 
-在终端检查：
+已经安装 Skill 后，让 Agent 运行 `scripts/first-use.cmd`。它会取得完整应用（如果宿主只装了仓库的 skill 目录）、复用已有工具、下载缺少的固定版本、验证文件、实测中文字幕，然后创建桌面入口并打开网页。缺少 Node.js 24 或 PowerShell 7 时使用便携版本，不调用 Windows PowerShell 5.1、不修改系统 PATH，也不要求管理员。
 
-```sh
-node --version
-pwsh --version
-```
+第一次全缺时约下载 0.8 GB，建议留出 2 GB 空间。工具和模型保存在本机资料根的 `runtime/`，配置与简短自检回执放在 `data/`。下载不上传用户音视频；来源和许可见[依赖来源](../skill/references/dependency-sources.md)。
 
-找不到命令时先安装对应运行环境并重新打开终端。Media Review 不自动下载运行环境、媒体工具或模型。
+## 从完整 ZIP 安装
 
-## 安装
+1. 下载本版完整 ZIP 并全部解压，保留脚本、运行包和自检样本。
+2. 双击“安装 Media Review.cmd”，或让 Agent 调用它。默认安装到 `.claude/skills/media-review`；其他宿主由 Agent 运行 `scripts/first-use.cmd --install --destination "<宿主的skills目录>\media-review"`。
+3. 等待自动准备及真实字幕测试通过，网页会打开。以后双击“Media Review”桌面图标即可重开。
 
-1. 将完整 ZIP 解压到普通本机目录，不要只取出 SKILL.md。
-2. 双击“安装 Media Review.cmd”。默认安装到当前用户的 `.claude/skills/media-review`，创建使用随包小电视IP图标的“Media Review”桌面快捷方式，并注册按资料根隔离的当前用户页面启动协议，说明为“启动 Media Review 本机音视频校对室”。
-3. 等待安装器明确报告 Skill 和桌面入口就绪，再双击图标打开。无需管理员权限，不设置开机启动、不改其他 Skill。
+如果宿主已经把 Skill 放在正确目录，直接执行 `scripts/first-use.cmd` 或“初始化桌面入口.cmd”，不用再安装一份。源码仓库的整个 `skill/` 也具有首次入口，会自动下载对应版本的完整运行包；只复制 SKILL.md 无法执行。
 
-如果目标已有不同版本或本机修改，安装器会保留原内容并停止，不自动覆盖升级。先备份并选择新位置，不要删除旧数据来绕过提示。
-
-仅复制完整包到其他宿主 Skill 目录的用户，首次运行“初始化桌面入口.cmd”补建图标。复制本身不会执行脚本或创建快捷方式，宿主是否发现 Skill 仍由宿主决定。
+已有其他版本或本机修改时保留原内容，Agent 应按升级流程处理对应冲突。下载中断后重跑同一入口即可复用已完成的工具；不需要删除用户资料来重试。[Agent 的完整首次准备、恢复和验收步骤](../skill/references/first-use.md)。
 
 ## 保存第一条意见
 
@@ -48,14 +41,14 @@ pwsh --version
 pwsh -NoProfile -File .\scripts\install.ps1 -Destination "<宿主的skills目录>\media-review" -Ffmpeg "<ffmpeg.exe的绝对路径>" -Whisper "<whisper-cli.exe的绝对路径>" -Model "<离线模型的绝对路径>"
 ```
 
-这些工具是可选的；只需指定已有且要使用的文件，可以省略未准备的参数。绑定只写入本机私有 `tools.json`，不进入分享包；已有绑定不会静默替换。安装器的 `-DesktopDirectory` 只用于明确指定快捷方式目录，例如隔离测试；不需要普通用户设置。
+以上为低层安装器的已有工具接入方式，普通首次使用由自动准备入口负责。绑定只写入本机私有 `tools.json`，不进入分享包；低层安装器遇到已有绑定会保留，需修复时由 Agent 使用首次入口。安装器的 `-DesktopDirectory` 只用于明确指定快捷方式目录，例如隔离测试；不需要普通用户设置。
 
 没有分析工具时仍可播放、手动标注、保存与交接。波形和转写会提示不可用，不会假装已分析。
 
 ### 分析工具接入范围
 
 - FFmpeg 可从本机 PATH 查找，或用 `-Ffmpeg` 指定。Agent 解码／代表帧自检还要求同一目录中有 `ffprobe.exe`；`doctor` 不单独证明 FFprobe 已就绪，具体结果以自检报告为准。
-- 语音入口是 **whisper.cpp 的 `whisper-cli`**，不是任意同名 Whisper 库或云端 API。当前实现使用 `-m`、`-f`、`-osrt`、`-of`、`-pp`、`-ng` 参数，模型应是该 CLI 能加载的 GGML `.bin` 模型；现有流程使用 small 模型，不自动替用户选模型或下载模型。
+- 语音入口是 **whisper.cpp 的 `whisper-cli`**，不是任意同名 Whisper 库或云端 API。当前实现使用 `-m`、`-f`、`-osrt`、`-of`、`-pp`、`-ng` 参数，模型应是该 CLI 能加载的 GGML `.bin` 模型；首次入口默认下载固定版本的 small 多语种模型，并优先保留已配置且通过自检的模型。
 - 当前转写固定以 `-l zh` 调用，未提供语言选择控件；不要将它理解为任意语种／任意 CLI 版本均已验证。
 - 本机检查环境为 Windows x64、Node.js 24、PowerShell 7 与 Edge。其他系统架构、浏览器编码组合和任意媒体工具发行版没有同等验收；Chrome 是建议浏览器，不等于所有 Chrome 版本／编码均测试通过。
 
@@ -87,7 +80,7 @@ Agent登记的原文件可重新带入。手选文件要从对应任务重新选
 2. 将新包安装到明确的新位置，不覆盖旧安装；让宿主使用选定的新Skill完整路径。已存在不同快捷方式目标时，安装器保留旧图标，可能创建带后缀的新入口，以回执为准。
 3. 不兼容旧版仍运行时，新入口拒绝共写，不会自动杀进程。beta.2先从旧页“任务操作 → 退出整个校对室”明确退出；beta.1没有界面退出按钮，可从新完整包目录先运行以下只核对命令：
 
-   `node scripts/review.mjs quit-legacy --legacy-root "<旧包app目录的绝对路径>"`
+   `scripts/review.cmd quit-legacy --legacy-root "<旧包app目录的绝对路径>"`
 
    它只检查旧登记、实际目录与已知beta.1服务身份。确认各旧窗口已保存且要退出后，才在同一命令加`--confirm`。令牌只在内存使用，不写网址或日志；身份不符不发送退出，不关闭浏览器、不删除资料。
 4. 此命令仅处理session登记的那一个旧服务。beta.1可能存在未登记的重复服务或独立CLI自检，不能声称它们全部退出。无法核实旧副本时，不混跑默认数据根：先用新的**绝对路径**`MEDIA_REVIEW_DATA_DIR`隔离测试，再在旧服务明确停止后采用完整备份迁移，不扫描／结束未知PID。

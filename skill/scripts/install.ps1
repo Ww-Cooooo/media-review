@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:MEDIA_REVIEW_DATA_DIR -and -not [IO.Path]::IsPathFullyQualified($env:MEDIA_REVIEW_DATA_DIR)) { throw 'MEDIA_REVIEW_DATA_DIR必须是绝对路径；未安装或修改启动入口。' }
 $source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
-if (-not $node) { throw '未找到Node.js。请先安装Node.js 24或更新版本；本安装器不会自动下载。' }
+if (-not $node) { throw '未找到Node.js。请 Agent 运行本 Skill 的 scripts/first-use.cmd 自动准备；低层安装器不负责下载。' }
 $major = [int]((& $node --version).TrimStart('v').Split('.')[0])
 if ($major -lt 24) { throw '需要Node.js 24或更新版本；未修改现有安装。' }
 function Assert-OrdinaryDirectory([string]$directory) {
@@ -87,15 +87,28 @@ if ($tools.Count) {
 }
 Assert-OrdinaryDirectory $DesktopDirectory
 $shortcutPath = Join-Path $DesktopDirectory 'Media Review.lnk'
+$shortcutArgs = '"' + (Join-Path $target 'app\server\open.mjs') + '"'
+if ($env:MEDIA_REVIEW_DATA_DIR) {
+  if ($env:MEDIA_REVIEW_DATA_DIR -match '["\r\n\x00]') { throw '桌面入口需要明确的本机资料目录。' }
+  $shortcutArgs += ' --data-dir "' + ([IO.Path]::GetFullPath($env:MEDIA_REVIEW_DATA_DIR) -replace '(\\+)$','$1$1') + '"'
+}
 $shell = New-Object -ComObject WScript.Shell
 if (Test-Path -LiteralPath $shortcutPath) {
   Assert-OrdinaryFile $shortcutPath
   $old = $shell.CreateShortcut($shortcutPath)
-  if ($old.TargetPath -ne $node -or $old.Arguments -ne ('"' + (Join-Path $target 'app\server\open.mjs') + '"')) { $shortcutPath = Join-Path $DesktopDirectory ('Media Review-' + [Guid]::NewGuid().ToString('N').Substring(0,6) + '.lnk') }
+  if ($old.TargetPath -ne $node -or $old.Arguments -ne $shortcutArgs) {
+    $matching = $null
+    foreach ($file in Get-ChildItem -LiteralPath $DesktopDirectory -Filter 'Media Review-*.lnk' -File) {
+      Assert-OrdinaryFile $file.FullName
+      $existing = $shell.CreateShortcut($file.FullName)
+      if ($existing.TargetPath -eq $node -and $existing.Arguments -eq $shortcutArgs) { $matching = $file.FullName; break }
+    }
+    $shortcutPath = if ($matching) { $matching } else { Join-Path $DesktopDirectory ('Media Review-' + [Guid]::NewGuid().ToString('N').Substring(0,6) + '.lnk') }
+  }
 }
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $node
-$shortcut.Arguments = '"' + (Join-Path $target 'app\server\open.mjs') + '"'
+$shortcut.Arguments = $shortcutArgs
 $shortcut.WorkingDirectory = Join-Path $target 'app'
 $shortcut.IconLocation = (Join-Path $target $iconRelative) + ',0'
 $shortcut.Description = '启动 Media Review 本机音视频校对室：按需启动或复用Node.js服务，不上传素材，不开机自启'

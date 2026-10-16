@@ -26,7 +26,7 @@ const built = await execute(process.execPath, [vite, 'build', '--mode', 'standal
 console.log(built.stdout);
 if (built.stderr) console.error(built.stderr);
 const copy = async (from, to) => fs.cp(from, to, { recursive: true, force: false, errorOnExist: true });
-for (const name of ['SKILL.md', 'README.md', 'references', 'scripts', '安装 Media Review.cmd', '初始化桌面入口.cmd', '打开 Media Review.cmd', '启动 Media Review 本机音视频校对室.cmd', '启动入口说明.txt']) await copy(path.join(root, 'skill', name), path.join(output, name));
+for (const name of ['SKILL.md', 'README.md', 'references', 'scripts', 'assets', '安装 Media Review.cmd', '初始化桌面入口.cmd', '打开 Media Review.cmd', '启动 Media Review 本机音视频校对室.cmd', '启动入口说明.txt']) await copy(path.join(root, 'skill', name), path.join(output, name));
 await copy(path.join(root, 'LICENSE'), path.join(output, 'LICENSE'));
 const app = path.join(output, 'app');
 await fs.mkdir(path.join(app, 'server'), { recursive: true });
@@ -64,7 +64,7 @@ async function walk(directory) {
     if (entry.isDirectory()) await walk(file);
     else {
       const bytes = await fs.readFile(file);
-      if (/\.(?:mp4|mov|wav|mp3|lnk|srt)$/iu.test(entry.name) || /\.(?:review|workspace)\.json$/u.test(entry.name)) throw new Error('候选不应含用户媒体或校对记录。');
+      if ((/\.(?:mp4|mov|wav|mp3|lnk|srt)$/iu.test(entry.name) && relative !== 'assets/setup-speech.wav') || /\.(?:review|workspace)\.json$/u.test(entry.name)) throw new Error('候选不应含用户媒体或校对记录。');
       files.push({ path: relative, sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length });
     }
   }

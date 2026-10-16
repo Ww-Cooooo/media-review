@@ -1,3 +1,3 @@
 @echo off
-pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install.ps1"
+call "%~dp0scripts\first-use.cmd" --install %*
 if errorlevel 1 pause

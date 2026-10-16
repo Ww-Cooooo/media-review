@@ -7,8 +7,8 @@
 交接文字给出 taskId、意见修订 revision、作品版本、来源对话和不可变快照路径。先读这一轮：
 
 ```text
-node scripts/review.mjs round --task "<taskId>" --revision "<revision>"
-node scripts/review.mjs progress --task "<taskId>"
+scripts/review.cmd round --task "<taskId>" --revision "<revision>"
+scripts/review.cmd progress --task "<taskId>"
 ```
 
 `round.record` 是用户交回的固定意见；`progress.recordRevision` 是当前正式意见修订。两者不同时，不把旧轮结果套进新意见。回读最新变化并明确当前要处理哪轮；已经有用户明确范围则照该范围做，无法确定的差异才问。快照不是可编辑真源，不写回快照或用户意见。
@@ -16,7 +16,7 @@ node scripts/review.mjs progress --task "<taskId>"
 向用户简短回报收到哪项任务、多少条修改/保留/待讨论意见、哪些需要澄清；用接手对话的可识别短名登记回执，不扫描别的聊天寻找名称：
 
 ```text
-node scripts/review.mjs acknowledge --task "<taskId>" --revision "<revision>" --agent "<接手对话短名>" --clarify "<待澄清意见ID,另一ID>" --text "<收到的范围和缺项>"
+scripts/review.cmd acknowledge --task "<taskId>" --revision "<revision>" --agent "<接手对话短名>" --clarify "<待澄清意见ID,另一ID>" --text "<收到的范围和缺项>"
 ```
 
 没有待澄清意见则省略 `--clarify`。回执保存了确切收到的意见 ID，不把它说成已经返修。工具不可用时继续能完成的真实业务，但说明进度登记未完成，不伪造成功。
@@ -32,7 +32,7 @@ node scripts/review.mjs acknowledge --task "<taskId>" --revision "<revision>" --
 需要澄清时登记具体问题，其他已明确且不依赖该答案的项可继续：
 
 ```text
-node scripts/review.mjs progress --task "<原任务ID>" --revision "<revision>" --note "<意见ID>" --state clarify --text "<具体缺项及其影响>"
+scripts/review.cmd progress --task "<原任务ID>" --revision "<revision>" --note "<意见ID>" --state clarify --text "<具体缺项及其影响>"
 ```
 
 ## 3. 新版必须关联原版
@@ -40,7 +40,7 @@ node scripts/review.mjs progress --task "<原任务ID>" --revision "<revision>" 
 完成真实返修并导出后，原成片和原意见不覆盖。每个新版本用新 request-id，同一调用重试沿用原 ID：
 
 ```text
-node scripts/review.mjs after-export --media "<新版绝对路径>" --request-id "<新UUID>" --label "<当前对话短名>" --previous-task "<直接上一版taskId>" --check-times "<新版修改位置毫秒,另一位置>"
+scripts/review.cmd after-export --media "<新版绝对路径>" --request-id "<新UUID>" --label "<当前对话短名>" --previous-task "<直接上一版taskId>" --check-times "<新版修改位置毫秒,另一位置>"
 ```
 
 先记录返回的新 task.id，再按 job.id 查询自检实际完成状态。`--previous-task` 只是版本关系，不迁移旧坐标。`--check-times` 必须来自新版实际位置，不能直接照抄旧时间；无可靠映射时省略并写明定位未核实。指定位置会在默认代表帧之外补取帧，最多 100 个；越出新片长度的位置会列为未覆盖。只看静帧不能证明动态、声音和字幕都检查过。
@@ -48,7 +48,7 @@ node scripts/review.mjs after-export --media "<新版绝对路径>" --request-id
 随后逐条登记做了什么，关联真实新版；`--at` 是可选的新版毫秒位置，必须在已核实的新片时长内：
 
 ```text
-node scripts/review.mjs progress --task "<原任务ID>" --revision "<revision>" --note "<意见ID>" --state changed --text "<原问题、实际处理、仍有的限制>" --target "<新版taskId>" --at "<新版毫秒位置>"
+scripts/review.cmd progress --task "<原任务ID>" --revision "<revision>" --note "<意见ID>" --state changed --text "<原问题、实际处理、仍有的限制>" --target "<新版taskId>" --at "<新版毫秒位置>"
 ```
 
 例如“将字幕上移约一行，位于 V2 的 00:04.200；原人物位置保留”比“已优化”可核查。对保留项，说明“按要求保留并核对”的实际证据，不写成改动。`changed` 仅表示已提交结果等待用户复核；Agent 不能写入 `confirmed`。用户可在新版的“版本与返修”中定位结果、回看原意见、确认或重新打开。意见内容修改后，旧处理状态自动成为待重新核对的历史。
@@ -60,7 +60,7 @@ node scripts/review.mjs progress --task "<原任务ID>" --revision "<revision>" 
 用 `check-report` 登记实际检查，不为填满表格宣称已看或已听。写一个 UTF-8 JSON 文件，再提交：
 
 ```text
-node scripts/review.mjs check-report --task "<新版taskId>" --report "<报告JSON绝对路径>"
+scripts/review.cmd check-report --task "<新版taskId>" --report "<报告JSON绝对路径>"
 ```
 
 报告结构（这是字段示例，执行时必须换成真实观察）：

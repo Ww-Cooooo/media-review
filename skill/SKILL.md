@@ -1,39 +1,39 @@
 ---
 name: media-review
-description: "视频或音频制作、剪辑、返修、导出任务中的主动校对环节：首版及每个可审阅新版本导出后，主动送到本机Media Review，取得独立taskId并排队自检，不等用户另说打开。多个对话共用同数据根的兼容服务；已有校对窗口时只送任务，不每轮另开页或抢用户正在审的片。Agent按真实自检证据核对画面、声音、字幕与节奏；用户实际交接后读取对应任务的意见和参考帧并返修。也用于审阅其他工具制作的成片。纯文字问答、无可播放成片、未获授权的发布不触发。"
+description: "本机音视频校对与自动中文字幕：首次使用、打开校对台或缺少识别工具时，由Agent下载配置运行包、工具和模型，实测后打开网页。视频或音频制作、剪辑、返修、导出时，首版及每个新版本主动送到Media Review，取得独立taskId并排队自检；已有窗口时只送任务，不抢正在审的片。用户实际交接后读取对应意见和参考帧返修。也用于审阅其他工具的成片；纯文字问答、无素材且非首次准备、未授权发布不触发。"
 metadata:
   skill_id: "56e78c64-701a-4a1b-85cb-751491ca743a"
-  version: "0.3.0-beta.5"
+  version: "0.3.0-beta.6"
 ---
 
 # Media Review
 
 把校对接进剪辑工作，而不是等用户想起来才打开。完整安装包包含本机应用、启动器和Windows安装器；不依赖特定剪辑软件或特定项目。原媒体只读，应用不内置云端上传。若使用云端Agent，按宿主的数据政策处理交接内容。
 
-在源码仓库的`skill/`下，本文件只是打包模板，不包含`app/`或安装清单。源码使用者应从仓库根目录调用`node scripts/review-agent.mjs`，不要在模板目录执行包内的`scripts/review.mjs`。下面的安装步骤和包内命令，均以已构建／取得完整安装包为前提。
+仓库的`skill/`不直接包含`app/`，但首次入口会自动取得并校验对应版本的完整运行包，因此通过宿主安装该目录也能继续使用。源码开发者从仓库根目录调用`node scripts/review-agent.mjs`；普通用户无需构建源码。
 
 ## 安装与入口
 
-- 本Windows测试版需要Node.js 24+、PowerShell 7+（`pwsh`）和支持素材编码的现代浏览器。Windows自带的Windows PowerShell 5.1不能代替`pwsh`；先用`node --version`、`pwsh --version`确认，不自动下载安装环境。
-- Windows首次安装运行包内`安装 Media Review.cmd`。安装器检测Node.js、复制本包、创建“Media Review”桌面快捷方式并注册当前用户、按资料根隔离的页面启动协议；入口明确说明“启动 Media Review 本机音视频校对室”。缺少Node时明确停止，不自动下载。已有不同版本时保留原内容，不静默覆盖；不希望注册协议可用`-SkipPageLauncher`，不默认切换其他安装副本的协议。
-- 仅复制到Skill目录并不执行安装器。若通过复制方式接入，首次使用先运行包内`初始化桌面入口.cmd`，不用让用户自己编写命令；不要谎称复制文件本身已创建快捷方式。
+- **首次使用或缺工具时，先读[首次准备与恢复](references/first-use.md)，由 Agent 运行本 Skill 的 `scripts/first-use.cmd`。** 它补齐运行包、Node.js 24、PowerShell 7、FFmpeg／FFprobe、Whisper CPU 和离线模型，完成真实中文字幕测试后初始化入口并打开网页。不要停在“需要用户自行安装／填写路径”。当前自动配置面向 Windows 10/11 x64，不使用 Windows PowerShell 5.1。
+- 已由宿主安装或复制到正确 Skill 目录时直接运行首次入口；完整 ZIP 的`安装 Media Review.cmd`默认安装到Claude Skill目录，其他宿主由 Agent 使用 `--install --destination "<完整Skill目录>"` 指定。桌面入口、私有配置和按资料根隔离的页面启动协议由脚本创建；复制文件本身不代表已经完成。
+- 优先复用已有有效工具；缺项下载到本机私有目录，固定来源并校验。已有不同版本、修改或未知内容保留，按首次准备参考解决当前冲突，不静默覆盖。没有管理员提权、系统PATH修改、开机启动或常驻下载器。
 - 日常双击桌面入口会核验、复用或按需启动服务，再打开网页。没有开机启动、常驻扫描或遥测。
 - 支持有本机文件／进程权限的Agent。宿主发现description不等于每个宿主强制加载；本Skill已进入剪辑任务后，下面的出片步骤必须执行。不擅自安装全局hook或修改其他Skill。
 
 ## 在剪辑任务中主动执行
 
-从本Skill目录解析相对位置，不硬编码用户、电脑或项目路径。可执行入口：`node scripts/review.mjs`。
+从本 Skill 目录解析相对位置，不硬编码用户、电脑或项目路径。下列 Windows 命令使用 `scripts/review.cmd`，可直接使用首次入口准备的便携 Node。已有系统 Node 的环境仍保留 `node scripts/review.mjs` 等价入口。首次准备后紧接送片时加 `--no-browser`，由 after-export 打开本轮页面，避免连开两页。
 
 1. 制作或返修前读当前任务意图、已有意见与保留边界；不要每次遍历整个历史记录目录。
 2. 每当第一版或新的可审成片**成功导出、文件写入结束**，直接执行：
 
-   `node scripts/review.mjs after-export --media "<本轮成片绝对路径>" --request-id "<本轮新建并记住的UUID>" --label "<当前任务的简短来源>"`
+   `scripts/review.cmd after-export --media "<本轮成片绝对路径>" --request-id "<本轮新建并记住的UUID>" --label "<当前任务的简短来源>"`
 
    这一步启动／复用同数据根的兼容服务、登记独立任务并**排队**自检，快速返回；不是同步自检完成。每个新版本使用新UUID；同一次调用重试沿用原UUID，防止重复建任务。不要扫描聊天记录寻找来源，label不包含秘密或整段私密需求。外部软件导出也可把明确文件交给此入口。
    返修同一作品时必须加 `--previous-task "<直接上一版taskId>"`；按新版实际修改位置可加 `--check-times "1200,4200"` 补取检查帧，不把旧时间码直接套过来。
 3. 回读`media-review-agent/v2`回执，记住`task.id`、`taskUrl`与`inspection.id`。给用户定位本轮成片时返回`taskUrl`及可重开本机服务的入口；`url`只是共用校对室地址，不能用它代表某个对话的任务。用户明确需要重开这项已有任务时用`open --task "<taskId>"`，不重新after-export建任务。`task.id`是本轮任务，不用全局current或文件名猜归属；相同素材也可有不同任务。`inspection.state=queued/running/waiting-resources`都不等于检查完成；`not-queued`表示任务已送达但分析没有入队，报告原因，不反复建任务。
 4. **送达任务与打开页面是两件事。** 入口已按`browser.open`决定是否请求系统浏览器打开。无论回执为true还是false，都不要再调用`browser.open`／新建tab“证明送达”：true是入口已请求打开，不是Agent已经看见窗口；false时任务通常已送到现有校对室。主窗口只在首次选择时自动带入；后续版本进入任务列表，不抢当前视频。自检优先用本对话已持有且不会打断用户的页面，或读取第5步的实际证据；没有可安全复用的页面时，不为每轮自检另开用户窗口、强刷旧页或切走正在校对的片。用户明确要求打开／重开时才用`open`入口；若专门的自动化上下文确实是当前工作所需，说明用途，保持独立并在结束时只关闭自己创建的上下文。
-5. 使用`node scripts/review.mjs status --task "<taskId>" --job "<jobId>" --result`查询真实结果。按当前状态合理等待，不用常驻CLI或高频忙轮询。只在`job.state=completed`时把返回的自检资料当成已生成证据，再读取`job.result.frameDirectory`下的实际帧与自检报告；失败、中断、缺工具和资源等待分别说明。仅检查代表帧不能冒称看过整段动态、听过完整声音或字幕已人工校对。独立self-checks证据标`origin:agent`、`userApproved:false`，不写进用户意见；FFmpeg解码／黑场／静音／取帧不能证明语义、美感、听感和事实通过。
+5. 使用`scripts/review.cmd status --task "<taskId>" --job "<jobId>" --result`查询真实结果。按当前状态合理等待，不用常驻CLI或高频忙轮询。只在`job.state=completed`时把返回的自检资料当成已生成证据，再读取`job.result.frameDirectory`下的实际帧与自检报告；失败、中断、缺工具和资源等待分别说明。仅检查代表帧不能冒称看过整段动态、听过完整声音或字幕已人工校对。独立self-checks证据标`origin:agent`、`userApproved:false`，不写进用户意见；FFmpeg解码／黑场／静音／取帧不能证明语义、美感、听感和事实通过。
 6. 发现问题后在用户原任务授权内输出新的版本，不覆盖原媒体和已有成片；新成片再执行第2步，共用服务并新建任务。保留用户正在审的旧版本及其意见，不悄悄迁移坐标。Agent工作结束时**不要默认执行quit**；待人工接手的任务应继续等用户回来。需要释放本轮分析只取消自己的需求，结束任务与退出整个服务都要有对应的明确授权。
 
 ## 用户校对与返修
@@ -52,10 +52,10 @@ metadata:
 ## 通用交接与工具
 
 - 本机状态页：页面顶部“本机可用性”显示运行修订、公开基础版本与本机定制的区别、Agent 送片记录线索以及播放、波形、转写的工具条件；`readiness` 可回读同样状态。缺少可选工具不阻断手动校对。
-- 本机诊断：`node scripts/review.mjs doctor`，只报告Node和媒体工具可用性，不打印令牌／环境／完整进程参数，不自动下载工具或模型。
-- 单独自检：`node scripts/review.mjs self-check --media "<成片绝对路径>"`，走同一个服务和队列，默认不开网页；用返回的taskId／jobId查真实完成结果。
-- 返修资料包：`node scripts/review.mjs export --task "<taskId>" --fingerprint "<本轮指纹>" --out "<新的目标文件夹>"`。新任务必须指定taskId；仅旧版全局资料可省略。包内含可直接打开的返修清单.html、文字清单、review.json、带编号框的独立 SVG 和原始参考图，不默认包含原媒体、绝对源路径、浏览器恢复缓存或其他轮次资料。资料是私有的，不自动上传。
-- 工具路径仅在本机数据目录tools.json保存`ffmpeg`、`whisper_cpu`、`model`三个可选路径；安装器支持显式连接，不把这些路径打进分享包。缺少转写工具不阻断播放、手动标注、保存与交接。
+- 本机诊断：`scripts/review.cmd doctor`，只报告Node和媒体工具可用性，不打印令牌／环境／完整进程参数，不自动下载工具或模型。
+- 单独自检：`scripts/review.cmd self-check --media "<成片绝对路径>"`，走同一个服务和队列，默认不开网页；用返回的taskId／jobId查真实完成结果。
+- 返修资料包：`scripts/review.cmd export --task "<taskId>" --fingerprint "<本轮指纹>" --out "<新的目标文件夹>"`。新任务必须指定taskId；仅旧版全局资料可省略。包内含可直接打开的返修清单.html、文字清单、review.json、带编号框的独立 SVG 和原始参考图，不默认包含原媒体、绝对源路径、浏览器恢复缓存或其他轮次资料。资料是私有的，不自动上传。
+- 工具路径仅在本机数据目录tools.json保存`ffmpeg`、`whisper_cpu`、`model`；首次入口自动补齐并保留原配置与未知字段。发现不可用时由 Agent 执行首次准备，不只交给用户一条缺工具提示。网络或识别暂不可用时，播放、手动标注、保存与交接仍可继续，不能宣称自动字幕已通过。
 
 ## 安全与能力边界
 

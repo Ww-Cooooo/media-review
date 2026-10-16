@@ -160,7 +160,8 @@ async function cleanup(job) {
 }
 
 export class MediaAnalysisService {
-  constructor(root, { scheduler = null, processMedia = null, onQueued = null, resourceBudget = null, uploadIdleMs = 120_000, now = () => performance.now(), maxUploads = 2 } = {}) {
+  constructor(root, { scheduler = null, processMedia = null, onQueued = null, resourceBudget = null, uploadIdleMs = 120_000, now = () => performance.now(), maxUploads = 2, tools = null } = {}) {
+    this.tools = tools;
     this.root = root; this.scheduler = scheduler; this.processMedia = processMedia; this.onQueued = onQueued; this.resourceBudget = resourceBudget; this.jobs = new Map();
     this.uploadIdleMs = uploadIdleMs; this.now = now; this.maxUploads = maxUploads;
     this.writes = keyedSerial();
@@ -278,7 +279,7 @@ export class MediaAnalysisService {
       let tools;
       let ffmpeg;
       try {
-        tools = await bundledTools(this.root);
+        tools = this.tools ?? await bundledTools(this.root);
         ffmpeg = await tools.ffmpeg();
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : '本机媒体工具不可用。';

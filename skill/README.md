@@ -2,7 +2,7 @@
 
 Agent出片后主动送到本机音视频校对室并排队自检；你回来后从任务列表接手，按时间或画面位置留下意见，再交回Agent返修。校对室本身不改写原片，也能审阅其他软件制作的成片。
 
-这是 **0.3.0-beta.5 Windows 预发布完整包**，包含连续标注、逐条返修与新版复核。[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.5)提供完整 ZIP 和校验文件；旧版安装不会自动更新，升级请先保存、备份并核对新入口。
+这是 **0.3.0-beta.6 Windows 预发布完整包**，包含连续标注、逐条返修与新版复核。[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.6)提供完整 ZIP 和校验文件；旧版安装不会自动更新，升级请先保存、备份并核对新入口。
 
 ## 边看边记意见
 
@@ -28,13 +28,13 @@ Agent出片后主动送到本机音视频校对室并排队自检；你回来后
 
 ## Windows 安装
 
-需要 Node.js 24+、PowerShell 7+（`pwsh`，不是 Windows PowerShell 5.1）以及支持素材编码的浏览器。
+自动准备支持 Windows 10/11 x64 和 Edge／Chrome。首次需要联网；Node.js 24、PowerShell 7、FFmpeg／FFprobe、Whisper CPU 与 small 多语种模型由 Agent 调用首次入口准备，不要求用户自行下载或填写路径。
 
-拿到本版的完整 ZIP 后，解压并双击[安装 Media Review.cmd](安装%20Media%20Review.cmd)。安装器默认将完整包安装到当前用户的 `.claude/skills/media-review`，创建采用随包小电视图标的“Media Review”桌面入口，并注册当前用户、按资料根隔离的页面启动协议。入口说明明确为“启动 Media Review 本机音视频校对室”，实际启动本机Node.js服务；不需要管理员权限，不自动下载软件、注册开机启动或修改其他 Skill。已有不同版本或本机修改会保留并停止，不静默覆盖。
+已经由宿主安装好本 Skill 时，让 Agent 运行 `scripts/first-use.cmd`。它优先复用已有工具，下载并校验缺项，完成真实中文字幕测试后创建桌面入口、注册当前用户页面唤起协议，并打开网页。工具放在本机私有目录，不需要管理员权限、不改系统 PATH、不开机自启。已有本机修改或其他版本保留，Agent 处理对应冲突。
 
-如果你是在源码仓库的 `skill/` 下看到本文件，这里只是打包模板，缺少运行程序和清单，不能直接当成完整安装包。
+如果宿主安装的是仓库中的整个 `skill/`，首次入口会从对应版本的 GitHub Release 自动下载完整应用并校验。不能只复制 SKILL.md；脚本、参考和自检样本也需要保留。
 
-仅复制完整包到 Skill 目录不会运行安装器；首次运行[初始化桌面入口.cmd](初始化桌面入口.cmd)补建图标。其他本机宿主可用安装器的 `-Destination` 指定**本 Skill 包自身的完整目标目录**，例如 `<宿主的skills目录>\media-review`；不要只填上一级 `skills` 父目录，安装器不会自动补一层项目名。是否自动发现 Skill 由宿主负责。
+手动下载完整 ZIP 的用户可双击[安装 Media Review.cmd](安装%20Media%20Review.cmd)，默认安装到 `.claude/skills/media-review`。其他宿主由 Agent 使用 `scripts/first-use.cmd --install --destination "<宿主的skills目录>\media-review"`。已经放在正确 Skill 目录时直接运行首次入口或[初始化桌面入口.cmd](初始化桌面入口.cmd)，无需再复制。完整流程、故障处理与回执说明见[首次准备](references/first-use.md)。
 
 日常双击桌面入口按需启动或复用服务。选择视频／音频，标记时间、写意见并保存，在首页“校对任务”点“查看资料”找到正式记录；不需要npm或一直开着终端。继续已有任务请从列表进入，需要另一套独立意见时点“手选素材，新建独立任务”。
 
@@ -43,12 +43,12 @@ Agent出片后主动送到本机音视频校对室并排队自检；你回来后
 本 Skill 已进入任务且 Agent 有本机文件／进程权限时，从本 Skill 目录执行：
 
 ```sh
-node scripts/review.mjs after-export --media "<已经写入完成的成片绝对路径>" --request-id "<本轮固定UUID>" --label "<来源短标识>"
+scripts/review.cmd after-export --media "<已经写入完成的成片绝对路径>" --request-id "<本轮固定UUID>" --label "<来源短标识>"
 ```
 
 入口返回独立taskId，并将自检送入共享队列，不等于已经检查完成。同次调用重试用相同`--request-id "<UUID>"`，新版本或独立意图用新UUID；用`status --task "<taskId>" --job "<inspection.id>" --result`读取这次实际结果。自检失败后可用`self-check --media "<原路径>" --request-id "<原taskId>" --label "<原task.label>" --title "<原task.title>"`重试同一任务（标题和来源与原回执相同，原来源为空时省略`--label`）；活动分析沿用原job，已终止分析返回新job，完成结果仍可能经完整内容校验后复用缓存。不是文件监控，不安装全局hook。
 
-同用户、同数据根共用兼容服务。一次运行首次自动请求打开浏览器，之后只送任务，不抢当前片；Agent不能拿到网址后再新建一页证明送达。回执中的`taskUrl`定位本轮独立任务，`url`只是共用入口；用户明确重开这项任务时使用`node scripts/review.mjs open --task "<taskId>"`，不重新登记成片。任务专属链接在次窗口也按指定任务打开；同任务有编辑窗口时仍先询问只读，不抢编辑。手动切换任务后网址同步到当前任务，不因后来送片改变。普通桌面或`open`只打开共用校对室，可能新开页，不能强制聚焦旧tab。Skill是宿主调用指引，不是所有宿主的强制拦截器。实际查看／回听与工具证据分开报告，Agent做完后不默认退出全局服务。
+同用户、同数据根共用兼容服务。一次运行首次自动请求打开浏览器，之后只送任务，不抢当前片；Agent不能拿到网址后再新建一页证明送达。回执中的`taskUrl`定位本轮独立任务，`url`只是共用入口；用户明确重开这项任务时使用`scripts/review.cmd open --task "<taskId>"`，不重新登记成片。任务专属链接在次窗口也按指定任务打开；同任务有编辑窗口时仍先询问只读，不抢编辑。手动切换任务后网址同步到当前任务，不因后来送片改变。普通桌面或`open`只打开共用校对室，可能新开页，不能强制聚焦旧tab。Skill是宿主调用指引，不是所有宿主的强制拦截器。实际查看／回听与工具证据分开报告，Agent做完后不默认退出全局服务。
 
 ### 放大和全屏看视频
 
@@ -62,7 +62,7 @@ node scripts/review.mjs after-export --media "<已经写入完成的成片绝对
 
 ## 工具、数据与断线
 
-FFmpeg／FFprobe、Whisper CLI 和离线模型均为可选工具，不随包提供或自动下载。缺少时仍可播放、手动标注、保存和交接，波形／转写和工具自检会明确显示不可用或未验证。用 `node scripts/review.mjs doctor` 查看可用性；安装器可显式绑定已有工具。
+首次入口会自动准备 FFmpeg／FFprobe、Whisper CLI 和离线模型，优先复用本机已有绑定。用 `scripts/review.cmd doctor` 查看可用性。首次下载中断时，Agent 应修复具体失败项并重试；播放、手动标注、保存和交接不依赖识别器，自动转写只有实际测试通过后才算就绪。
 
 默认私有数据位于用户主目录的 `.media-review-desk/data`，历史名称保留以兼容已有资料，与程序分开。Agent 自检与用户意见分开保存；恢复副本不是正式保存。应用不内置云端上传；交接给云端 Agent 时仍需按宿主的数据政策处理。
 
@@ -82,6 +82,8 @@ FFmpeg／FFprobe、Whisper CLI 和离线模型均为可选工具，不随包提�
 
 不希望注册协议时，运行`pwsh -NoProfile -File .\scripts\install.ps1 -Destination "<新的完整安装目录>" -SkipPageLauncher`，只跳过本次注册，不取消已有登记。另一Media Review副本已有登记时默认保留；明确采用新副本时才加`-ReplacePageLauncher`，未知归属的协议即使加参数也不覆盖。自定义资料根应先设置绝对路径`MEDIA_REVIEW_DATA_DIR`，启动入口会固定绑定这个根，不依赖浏览器继承终端环境。
 
+以下低层命令中的 `pwsh` 若不在系统 PATH，由 Agent 使用首次入口最后一行 JSON 中 `pwsh` 给出的绝对路径执行；无需用户再安装 PowerShell。
+
 取消本安装副本的页面入口，可从其完整目录执行：
 
 ```powershell
@@ -92,7 +94,7 @@ pwsh -NoProfile -File .\scripts\page-launcher.ps1 -Action Unregister -AppRoot "<
 
 ### 旧版升级
 
-先在旧页保存并备份整个`.media-review-desk/data`及原媒体，再安装到新的完整目录。不兼容旧服务仍运行时，新入口会拒绝，不自动关闭它。beta.2可从旧页“任务操作 → 退出整个校对室”明确退出；beta.1没有界面退出按钮：从新包目录先执行`node scripts/review.mjs quit-legacy --legacy-root "<旧包app目录的绝对路径>"`核对，确认旧窗口已保存且要退出后才追加`--confirm`。只处理session登记的已知旧服务，不扫描／结束未知PID，也不保证未登记重复服务或独立CLI都已退出；无法核实则用新的绝对路径`MEDIA_REVIEW_DATA_DIR`隔离试用，不能混跑默认数据根。让宿主显式使用选定的新Skill路径，桌面图标以安装器回执为准，不能假称已替换旧安装。
+先在旧页保存并备份整个`.media-review-desk/data`及原媒体，再安装到新的完整目录。不兼容旧服务仍运行时，新入口会拒绝，不自动关闭它。beta.2可从旧页“任务操作 → 退出整个校对室”明确退出；beta.1没有界面退出按钮：从新包目录先执行`scripts/review.cmd quit-legacy --legacy-root "<旧包app目录的绝对路径>"`核对，确认旧窗口已保存且要退出后才追加`--confirm`。只处理session登记的已知旧服务，不扫描／结束未知PID，也不保证未登记重复服务或独立CLI都已退出；无法核实则用新的绝对路径`MEDIA_REVIEW_DATA_DIR`隔离试用，不能混跑默认数据根。让宿主显式使用选定的新Skill路径，桌面图标以安装器回执为准，不能假称已替换旧安装。
 
 不要分享私有数据目录、工具绑定、媒体或意见。自有源码授权与第三方声明分别以完整包随附的 LICENSE、THIRD_PARTY_NOTICES.txt 和字体／GSAP 原许可为准，不将第三方重新标成 MIT 或将 MiSans 称为 OFL。
 

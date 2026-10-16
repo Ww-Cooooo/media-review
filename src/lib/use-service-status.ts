@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 export type ServiceState = 'connecting' | 'online' | 'reconnecting' | 'offline' | 'incompatible' | 'restarted';
-const UI_REVISION = 'review-0-3-0-beta-5', PROTOCOL = 3;
+const UI_REVISION = 'review-0-3-0-beta-6', PROTOCOL = 3;
 interface Status { state: ServiceState; rootId: string; dataId: string; runtimeId: string }
 export function useServiceStatus() {
   const identity = useRef({ rootId: '', dataId: '', runtimeId: '' });

@@ -71,7 +71,7 @@ export async function openReview({ rootDir = ROOT, media = null, taskId = null, 
   if (browser) {
     browserAction = await post('/api/browser/claim', { force: forceBrowser });
     if (browserAction.open) {
-      const executable = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+      const executable = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:/Windows', 'explorer.exe') : process.platform === 'darwin' ? 'open' : 'xdg-open';
       const child = spawn(executable, [taskUrl], { stdio: 'ignore', windowsHide: true });
       const requested = await new Promise(resolve => { child.once('spawn', () => resolve(true)); child.once('error', () => resolve(false)); }); child.unref();
       browserAction = { ...browserAction, requested, ...(requested ? {} : { open: false, reason: '系统浏览器打开请求未确认；任务已保留，请用taskUrl或桌面入口打开。' }) };
@@ -82,6 +82,12 @@ export async function openReview({ rootDir = ROOT, media = null, taskId = null, 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) || process.argv[1]?.endsWith('open-preview.mjs')) {
   try {
     const args = process.argv.slice(2), index = args.indexOf('--media');
+    const dataIndex = args.indexOf('--data-dir');
+    if (dataIndex >= 0) {
+      const dataRoot = args[dataIndex + 1];
+      if (!dataRoot || !path.isAbsolute(dataRoot) || /["\r\n\0]/u.test(dataRoot)) throw new Error('--data-dir需要明确的本机绝对目录');
+      process.env.MEDIA_REVIEW_DATA_DIR = path.resolve(dataRoot);
+    }
     if (index >= 0 && !args[index + 1]) throw new Error('--media需要明确媒体路径');
     const result = await openReview({ media: index < 0 ? null : args[index + 1], browser: !args.includes('--check') && !args.includes('--no-browser'), forceBrowser: !args.includes('--check') });
     if (args.includes('--check')) console.log(JSON.stringify(result));

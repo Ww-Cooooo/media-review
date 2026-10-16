@@ -8,17 +8,17 @@ Media Review 是一个本机音视频校对室，也是一套供 Agent 使用的
 
 ## 开始使用
 
-当前版本为 **0.3.0-beta.5 Windows 预发布版**，完整安装包见 [本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.5)。本版补齐边看边标记、多区域说明、逐条返修、新旧版本复核和可读导出，保留小电视桌面图标及原有播放功能。旧版安装不会自动更新，本项目仍处于测试阶段。
+当前版本为 **0.3.0-beta.6 Windows 预发布版**，完整安装包见 [本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.6)。本版补齐首次使用：Agent 自动准备运行环境、识别器和模型，实际生成测试字幕后打开网页。连续标注、多区域意见、逐条返修和版本复核继续保留。旧版安装不会自动更新。
 
 ### 下载安装（Windows）
 
-准备 **Node.js 24+、PowerShell 7+（命令为 `pwsh`）和支持素材编码的浏览器**，推荐 Microsoft Edge 或 Chrome。未安装运行环境时，可从 [Node.js 24 官方下载目录](https://nodejs.org/dist/latest-v24.x/)选择 Windows `.msi` 安装版，并按 [微软官方说明](https://learn.microsoft.com/zh-cn/powershell/scripting/install/install-powershell-on-windows)安装 PowerShell 7；详细选择与检查方法见[安装说明](docs/install-windows.md)。
+使用 **Windows 10/11 x64**、Edge 或 Chrome，以及能运行本机命令的 Agent。将本仓库地址交给 Agent 安装 `media-review` Skill，然后说“打开音视频校对台”。Agent 会执行随包首次入口，下载缺少的运行环境、识别器和语音模型，配置并测试后打开网页；用户不用寻找工具或填写路径。已有工具优先复用，首次全缺时约下载 0.8 GB，建议留出 2 GB 空间。
 
-下载 [media-review-0.3.0-beta.5-windows.zip](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.5/media-review-0.3.0-beta.5-windows.zip)，全部解压，双击“安装 Media Review.cmd”。安装器会安装 Skill 并创建桌面入口，不需要管理员权限，不自动下载软件或注册开机启动。发布页同时提供 SHA256SUMS.txt；不要把源码页的“Download ZIP”或发布页的“Source code”当作完整安装包。
+也可以下载 [完整 ZIP](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.6/media-review-0.3.0-beta.6-windows.zip)，全部解压，双击“安装 Media Review.cmd”。它默认安装到 Claude Skill 目录并完成同一准备流程；其他宿主由 Agent 指定对应目录。工具保存在校对台自己的私有目录，不需要管理员、不修改系统 PATH、不开机自启。下载期间只获取依赖，不上传用户音视频。
 
-安装完成后双击桌面图标，选择一段视频或音频，标记时间点并保存第一条意见。在首页“校对任务”中查看对应任务，点“查看资料”找到保存位置。[完整安装及旧版升级说明](docs/install-windows.md)。
+准备成功后网页自动打开，选择视频或音频即可生成字幕、标记时间并保存意见。以后也可双击桌面图标重开。[完整安装及旧版升级说明](docs/install-windows.md)。
 
-**请保留完整包，不能只复制 SKILL.md。** 源码仓库的 `skill/` 是打包模板，不是已经包含运行程序的安装包。
+**安装 Skill 时保留整个 `skill/` 目录，不能只复制 SKILL.md。** 宿主只取得这个目录时，首次入口会自动补齐对应版本的完整运行包；开发源码的 ZIP 仍不等于已构建应用。
 
 ### 从当前源码运行
 
@@ -59,10 +59,10 @@ Agent 需要能在本机读取文件、执行命令；纯网页聊天界面本�
 node scripts/review-agent.mjs after-export --media "<本轮成片的绝对路径>" --request-id "<本轮固定UUID>" --label "<来源短标识>"
 ```
 
-从**已安装的完整 Skill 目录**执行：
+从**已完成首次准备的 Windows Skill 目录**执行：
 
 ```sh
-node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --request-id "<本轮固定UUID>" --label "<来源短标识>"
+scripts\review.cmd after-export --media "<本轮成片的绝对路径>" --request-id "<本轮固定UUID>" --label "<来源短标识>"
 ```
 
 将占位符替换为实际导出的文件路径。入口启动／复用同用户、同数据根的兼容服务，返回独立 `task.id` 并排队自检；排队不是已经检查完成。记录这个 taskId 和 `inspection.id`，用 `status --task "<taskId>" --job "<inspection.id>" --result`查询这次实际结果。同一次调用重试可提供相同的 `--request-id "<UUID>"`；不同版本或独立意图使用新 UUID，`--label`可标明来源。
@@ -84,7 +84,7 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 | FFmpeg／FFprobe | 真实 RMS 波形、解码检查、代表帧和条件黑场／静音检测 | 手动播放、标注、保存和交接仍可用；相应分析明确不可用 |
 | whisper.cpp CLI 与 GGML `.bin` 模型 | 本机语音转写与台词定位索引 | 可以按画面、声音和时间手动定位 |
 
-安装包不包含这些工具或模型，也不自动下载。安装器可显式绑定已有文件，[安装说明](docs/install-windows.md)列出参数。自动转写需要回听校正；取帧、解码通过不等于全片观看、美感或听感验收，也不等于用户认可。
+这些工具和模型由首次入口自动准备，固定来源、版本和校验值见[依赖说明](skill/references/dependency-sources.md)。缺少工具或配置变化时，Agent 重新运行首次入口恢复；网络受限时，手动校对仍可用。自动转写需要回听校正；取帧、解码通过不等于全片观看、美感或听感验收，也不等于用户认可。
 
 ## 数据与恢复
 
@@ -128,7 +128,7 @@ node scripts/review.mjs after-export --media "<本轮成片的绝对路径>" --r
 
 ```sh
 npm test
-npm run build:skill -- --out release/media-review-0.3.0-beta.5
+npm run build:skill -- --out release/media-review-0.3.0-beta.6
 ```
 
 测试使用隔离目录，不需要真实用户媒体。构建命令生成完整 Skill 文件夹；它不执行安装、不上传或创建 GitHub Release，输出目录已存在时不会覆盖。安装包会保留自有源码许可与第三方声明。目录关系、测试范围与安装器参数见[开发说明](docs/development.md)。

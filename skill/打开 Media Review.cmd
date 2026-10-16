@@ -3,5 +3,5 @@ chcp 65001 >nul
 title 启动 Media Review 本机音视频校对室
 echo 启动 Media Review 本机音视频校对室
 echo 此入口按需启动或复用本机 Node.js 校对服务，不上传素材，不开机自启。
-node "%~dp0app\server\open.mjs"
+call "%~dp0scripts\first-use.cmd"
 if errorlevel 1 pause
