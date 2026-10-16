@@ -6,6 +6,7 @@ import { ReviewDesk } from './review-desk';
 import './review-selected.css';
 import './review-annotations.css';
 import './review-flow.css';
+import './components/frame-comment.css';
 import 'lenis/dist/lenis.css';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';

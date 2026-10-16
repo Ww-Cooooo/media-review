@@ -46,6 +46,8 @@ export function draftSignature(draft: ReviewDraft): string {
 
 export function draftProblem(draft: ReviewDraft, durationMs: number, selecting = false): string {
   if (selecting) return '当前选取还没有完成，请完成选取或先取消。';
+  const blank = missingRegionComment(draft);
+  if (blank) return `请填写框 ${blank.id} 的意见，或删除此框。`;
   if (!draft.text.trim() && !regionsOf(draft).some(region => region.text?.trim())) return '先写下这条意见。';
   if (!draft.mode) return '请选择整片意见、时间点、时间段或画面位置。';
   const start = parseTime(draft.startText);
@@ -57,7 +59,14 @@ export function draftProblem(draft: ReviewDraft, durationMs: number, selecting =
   if (draft.mode === 'frame' && (!regionsOf(draft).length || draft.frameMs === null || (!draft.snapshot && !draft.reference))) return '请完成画面框选并取得参考画面。';
   if (regionsOf(draft).length && draft.frameMs !== null && !draft.snapshot && !draft.reference) return '参考画面尚未取得，请重新框选；时间和文字仍保留。';
   if (draft.text.length > 2000) return '单条意见最多2000字，请拆成两条。';
+  if (regionsOf(draft).some(region => (region.text?.length ?? 0) > 2000)) return '每个框的意见最多2000字，请缩短或拆成两条。';
   return '';
+}
+
+export function missingRegionComment(draft: ReviewDraft) {
+  // Old records may use a shared opinion with no per-region text field. Preserve
+  // that meaning. New boxes explicitly start with text: '' and must be filled.
+  return regionsOf(draft).find(region => !region.text?.trim() && (region.text !== undefined || !draft.text.trim()));
 }
 
 export function draftToNote(draft: ReviewDraft, durationMs: number): ReviewNote {

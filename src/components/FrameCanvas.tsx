@@ -4,7 +4,29 @@ import type { FrameRegion, Rect } from '../lib/review';
 interface Props { selected?: number | null; onSelect?: (id: number) => void; regions: FrameRegion[]; regionSerial: number; drawing: boolean; onChange: (regions: FrameRegion[]) => void; onDone: (region: FrameRegion) => void }
 
 export function FrameRegions({ regions, labelsOnly = false, selected, onSelect }: { regions: FrameRegion[]; labelsOnly?: boolean; selected?: number | null; onSelect?: (id: number) => void }) {
-  return <>{regions.map(({ id, rect }) => <span key={id} data-region-id={id} role={onSelect ? 'button' : undefined} tabIndex={onSelect ? 0 : undefined} aria-label={onSelect ? `查看区域 ${id} 的说明` : undefined} onClick={onSelect ? () => onSelect(id) : undefined} onKeyDown={onSelect ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(id); } } : undefined} className={(labelsOnly ? 'region-label-anchor' : 'region-rect') + (selected === id ? ' region-active' : '') + (onSelect ? ' region-interactive' : '')} style={{ left: rect.x * 100 + '%', top: rect.y * 100 + '%', width: rect.width * 100 + '%', height: rect.height * 100 + '%' }}><b className="region-number">{id}</b></span>)}</>;
+  const host = useRef<HTMLSpanElement>(null), [size, setSize] = useState({ width: 1, height: 1 });
+  useEffect(() => {
+    const node = host.current?.parentElement; if (!node) return;
+    const measure = () => setSize({ width: node.clientWidth, height: node.clientHeight });
+    const observer = new ResizeObserver(measure); observer.observe(node); measure(); return () => observer.disconnect();
+  }, []);
+  const labels: { x: number; y: number }[] = [];
+  return <><span ref={host} />{regions.map(({ id, rect, text }) => {
+    const x = rect.x * size.width, y = rect.y * size.height;
+    let label = { x, y };
+    if (onSelect) {
+      const occupied = (p: { x: number; y: number }) => labels.some(other => Math.abs(other.x - p.x) < 30 && Math.abs(other.y - p.y) < 30);
+      const candidates = [];
+      for (let row = -7; row <= 7; row++) for (let col = -7; col <= 7; col++) candidates.push({ x: Math.max(0, Math.min(size.width - 28, x + col * 32)), y: Math.max(0, Math.min(size.height - 28, y + row * 32)) });
+      candidates.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
+      label = candidates.find(p => !occupied(p)) ?? label;
+    }
+    labels.push(label);
+    return <span key={id} data-region-id={id} className={(labelsOnly ? 'region-label-anchor' : 'region-rect') + (selected === id ? ' region-active' : '') + (text?.trim() ? ' region-filled' : ' region-pending')} style={{ left: rect.x * 100 + '%', top: rect.y * 100 + '%', width: rect.width * 100 + '%', height: rect.height * 100 + '%' }}>
+      {['nw', 'ne', 'sw', 'se'].map(corner => <i key={corner} className={`region-corner ${corner}`} />)}
+      {onSelect ? <button type="button" className="region-number" aria-label={`查看框 ${id} 的意见`} aria-pressed={selected === id} onClick={() => onSelect(id)} style={{ left: label.x - x, top: label.y - y }}>{id}</button> : <b className="region-number">{id}</b>}
+    </span>;
+  })}</>;
 }
 
 export function FrameCanvas({ regions, regionSerial, drawing, onChange, onDone, selected, onSelect }: Props) {
@@ -28,7 +50,7 @@ export function FrameCanvas({ regions, regionSerial, drawing, onChange, onDone, 
       const width = () => Math.max(1, canvas.getWidth()), height = () => Math.max(1, canvas.getHeight());
       const add = (r: Rect) => {
         const shape = new FabricRect({ left: r.x * width(), top: r.y * height(), width: r.width * width(), height: r.height * height(),
-          originX: 'left', originY: 'top', fill: '#cf8b5018', stroke: '#ffd1a6', strokeWidth: 2, strokeUniform: true,
+          originX: 'left', originY: 'top', fill: '#cf8b5008', stroke: '#ffd1a6', strokeWidth: 2, strokeDashArray: [4, 5], strokeUniform: true,
           cornerColor: '#ffd1a6', cornerStrokeColor: '#483527', cornerSize: 10, transparentCorners: false,
           lockRotation: true, lockScalingFlip: true });
         shape.setControlsVisibility({ mtr: false }); canvas.add(shape); return shape;
@@ -43,9 +65,9 @@ export function FrameCanvas({ regions, regionSerial, drawing, onChange, onDone, 
         canvas.setDimensions({ width: Math.max(1, node.clientWidth), height: Math.max(1, node.clientHeight) });
         const values = callbacks.current.regions;
         for (const [id, shape] of shapes) if (!values.some(item => item.id === id)) { canvas.remove(shape); shapes.delete(id); }
-        for (const { id, rect } of values) {
+        for (const { id, rect, text } of values) {
           const shape = shapes.get(id) ?? add(rect); shapes.set(id, shape);
-          shape.set({ left: rect.x * width(), top: rect.y * height(), width: rect.width * width(), height: rect.height * height(), scaleX: 1, scaleY: 1 }).setCoords();
+          shape.set({ left: rect.x * width(), top: rect.y * height(), width: rect.width * width(), height: rect.height * height(), scaleX: 1, scaleY: 1, stroke: callbacks.current.selected === id ? '#ffd29c' : text?.trim() ? '#9bc799' : '#e9b755' }).setCoords();
         }
         const active = callbacks.current.selected;
         if (!callbacks.current.drawing && active && shapes.has(active)) canvas.setActiveObject(shapes.get(active)!);
@@ -70,7 +92,7 @@ export function FrameCanvas({ regions, regionSerial, drawing, onChange, onDone, 
         origin = null;
         const valid = preview.width / width() >= .02 && preview.height / height() >= .02;
         const rect = normalized(preview); canvas.remove(preview); preview = null;
-        if (valid) callbacks.current.onDone({ id: Math.max(callbacks.current.regionSerial, 0, ...callbacks.current.regions.map(item => item.id)) + 1, rect });
+        if (valid) callbacks.current.onDone({ id: Math.max(callbacks.current.regionSerial, 0, ...callbacks.current.regions.map(item => item.id)) + 1, rect, text: '' });
         canvas.requestRenderAll();
       });
       const select = () => { const entry = [...shapes].find(([, shape]) => shape === canvas.getActiveObject()); if (entry) callbacks.current.onSelect?.(entry[0]); };
@@ -85,5 +107,5 @@ export function FrameCanvas({ regions, regionSerial, drawing, onChange, onDone, 
     }).catch(() => { if (!cancelled) setFailure('画面绘制层未能加载，已有标记仍保留。请重新进入框选。'); });
     return () => { cancelled = true; dispose(); };
   }, [drawing]);
-  return <div className="frame-layer" data-drawing={drawing} aria-label="画面框选与方框编辑"><div className="frame-canvas-host" ref={host} /><FrameRegions regions={regions} labelsOnly selected={selected} />{failure && <p role="alert" className="canvas-failure">{failure}</p>}</div>;
+  return <div className="frame-layer" data-drawing={drawing} aria-label="画面框选与方框编辑"><div className="frame-canvas-host" ref={host} /><FrameRegions regions={regions} labelsOnly selected={selected} onSelect={onSelect} />{failure && <p role="alert" className="canvas-failure">{failure}</p>}</div>;
 }

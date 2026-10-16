@@ -8,13 +8,13 @@ Media Review 是一个本机音视频校对室，也是一套供 Agent 使用的
 
 ## 开始使用
 
-当前版本为 **0.3.0-beta.9 Windows 预发布版**，完整安装包见 [本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.9)。意见默认直接在“填写意见”中写，画面框仅用于定位；需要分别解释时再进入可选的逐框补充，最后一起保存。首次准备先说明，后续打开先检查已有环境，只补缺项。连续标注、多区域意见、逐条返修和版本复核继续保留。旧版安装不会自动更新。
+当前版本为 **0.3.0-beta.10 Windows 预发布版**，完整安装包见 [本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.10)。画一个框，旁边就出现对应意见卡；写完点“完成”，直接继续拖下一个框。待填写和已填写分组、分色显示，全部写好后一起保存。首次准备先说明，后续打开先检查已有环境，只补缺项。连续标注、多区域意见、逐条返修和版本复核继续保留。旧版安装不会自动更新。
 
 ### 下载安装（Windows）
 
 使用 **Windows 10/11 x64**、Edge 或 Chrome，以及能运行本机命令的 Agent。将本仓库地址交给 Agent 安装 `media-review` Skill，然后说“打开音视频校对台”。Agent 会先说明可能需要联网下载和配置什么，再检查本机，补齐缺少的运行环境、识别器和语音模型，实测后打开网页；用户不用寻找工具或填写路径。首次全缺时约下载 0.8 GB，建议留出 2 GB 空间。
 
-也可以下载 [完整 ZIP](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.9/media-review-0.3.0-beta.9-windows.zip)，全部解压，双击“安装 Media Review.cmd”。它默认安装到 Claude Skill 目录并完成同一准备流程；其他宿主由 Agent 指定对应目录。工具保存在校对台自己的私有目录，不需要管理员、不修改系统 PATH、不开机自启。下载期间只获取依赖，不上传用户音视频。
+也可以下载 [完整 ZIP](https://github.com/Ww-Cooooo/media-review/releases/download/v0.3.0-beta.10/media-review-0.3.0-beta.10-windows.zip)，全部解压，双击“安装 Media Review.cmd”。它默认安装到 Claude Skill 目录并完成同一准备流程；其他宿主由 Agent 指定对应目录。工具保存在校对台自己的私有目录，不需要管理员、不修改系统 PATH、不开机自启。下载期间只获取依赖，不上传用户音视频。
 
 准备成功后网页自动打开，选择视频或音频即可生成字幕、标记时间并保存意见。以后通过 Agent 或桌面入口打开，都会先检查实际工具路径和可用性；能用就复用，不重复安装，工具未变化也不重复跑字幕测试。准备好后通常可离线使用，文件缺失、失效或明确升级时才可能再次下载。[完整安装及旧版升级说明](docs/install-windows.md)。
 
@@ -128,7 +128,7 @@ scripts\review.cmd after-export --media "<本轮成片的绝对路径>" --reques
 
 ```sh
 npm test
-npm run build:skill -- --out release/media-review-0.3.0-beta.9
+npm run build:skill -- --out release/media-review-0.3.0-beta.10
 ```
 
 测试使用隔离目录，不需要真实用户媒体。构建命令生成完整 Skill 文件夹；它不执行安装、不上传或创建 GitHub Release，输出目录已存在时不会覆盖。安装包会保留自有源码许可与第三方声明。目录关系、测试范围与安装器参数见[开发说明](docs/development.md)。

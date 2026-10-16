@@ -16,7 +16,7 @@
 .region-comment-navigation + .opinion-scope-hint { margin-top: 6px; }
 .comment-heading { display: block; margin-bottom: 3px; font-size: 13px; }
 .region-chip { display: inline-flex; align-items: center; border: 1px solid #cbb99e; border-radius: 5px; background: #f5eddf; }
-.region-chip.is-active { border-color: #9b5838; background: #f3dfc9; }
+.region-chip.is-active { border-color: #9b5838; }
 .region-chip .ant-btn { border-radius: 0; height: 28px; }
 .region-chip .ant-btn-dangerous { border-left: 1px solid #dbc3b0; color: #a6342e; width: 24px; }
 .surface-tools .ant-btn.finish-frame { background: #bce8c5; border-color: #bce8c5; color: #153c25; font-weight: 600; }
@@ -73,5 +73,5 @@
   .workspace { grid-template-columns: minmax(0, 1fr) 350px; gap: 12px; }
   .workspace-wrap { padding-inline: 16px; }
   .video-view-actions .ant-btn { width: 32px; padding-inline: 4px; }
-  .video-view-actions .ant-btn>span:not(.anticon) { display: none; }
+  .video-view-actions .ant-btn>span:not(.ant-btn-icon) { display: none; }
 }

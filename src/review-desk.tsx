@@ -24,6 +24,7 @@ import { useAnalysisLocator } from './lib/use-analysis-locator';
 import { AnalysisActivityNotice } from './components/AnalysisActivityNotice';
 import './review-lifecycle.css';
 import { FrameCanvas, FrameRegions } from './components/FrameCanvas';
+import { FrameComment } from './components/FrameComment';
 import { VideoPreview } from './components/VideoPreview';
 import { ReviewWaveform } from './components/ReviewWaveform';
 import FrameStrip from './components/FrameStrip';
@@ -35,7 +36,7 @@ import { loadRecord, saveRecord, loadReference, saveReference, workflowFile, loa
 import { useServiceStatus } from './lib/use-service-status';
 import { cacheWorkspace, cachedWorkspace, type ReviewWorkspace } from './lib/review-workspace';
 import { useMediaAnalysis } from './lib/use-media-analysis';
-import { emptyDraft, hasDraftWork, draftMarks, clearedDraftMarks, draftProblem, draftSignature, draftToNote, type ReviewDraft, type TargetMode } from './lib/review-draft';
+import { emptyDraft, hasDraftWork, draftMarks, clearedDraftMarks, draftProblem, draftSignature, draftToNote, missingRegionComment, type ReviewDraft, type TargetMode } from './lib/review-draft';
 import { clampMs, fingerprintFile, formatTime, KIND_LABEL, parseTime, REFERENCE_FORMAT, REVIEW_FORMAT, REGIONS_FORMAT, FLOW_FORMAT, COMPLETE_FORMAT, regionsOf, sortedNotes, TOPIC_LABEL, type MediaIdentity, type Rect, type ReviewRecord, type ReviewNote, type ReviewTopic } from './lib/review';
 
 interface OpenMedia { file: File; local: boolean; url: string; isAudio: boolean; identity: MediaIdentity; width: number; height: number }
@@ -136,6 +137,7 @@ export function ReviewDesk() {
   const ordered = useMemo(() => sortedNotes(notes).filter(note => (!noteQuery || [note.text, ...regionsOf(note).map(region => region.text ?? ''), progress.bundle?.statuses[note.id]?.latest?.text ?? ''].join(' ').toLocaleLowerCase().includes(noteQuery.toLocaleLowerCase())) && (!topicFilter || note.topic === topicFilter) && (!progressFilter || (progress.bundle?.statuses[note.id]?.status ?? (note.kind === 'discuss' ? 'clarify' : 'pending')) === progressFilter)), [notes, noteQuery, topicFilter, progressFilter, progress.bundle]);
   function focusRegion(id: number) {
     setSelectedRegion(id);
+    if (view.kind !== 'detail') setCommentRegionId(id);
     if (view.kind === 'detail') setTimeout(() => root.current?.querySelector<HTMLElement>(`[data-region-comment="${id}"]`)?.scrollIntoView({ block: 'nearest' }), 0);
   }
   function nextIssue() { if (!ordered.length) return; const index = ordered.findIndex(note => view.kind !== 'new' && note.id === view.id); showNote(ordered[(index + 1) % ordered.length]); }
@@ -147,7 +149,7 @@ export function ReviewDesk() {
   const draft = view.kind === 'detail' && selected ? fromNote(selected) : view.kind === 'edit' ? editDraft : newDraft;
   const reading = view.kind === 'detail';
   const regions = regionsOf(draft);
-  // Selecting/moving a box must not silently change where the user is typing.
+  // Card identity is the stable region id; text lives in the draft on every input.
   const commentRegion = regions.find(region => region.id === commentRegionId);
   const regionCommentCount = regions.filter(region => region.text?.trim()).length;
   useEffect(() => { if (commentRegionId !== null && !commentRegion) setCommentRegionId(null); }, [commentRegionId, commentRegion]);
@@ -261,8 +263,13 @@ export function ReviewDesk() {
   }
   function editRegionComment(id: number) {
     setCommentRegionId(id); setSelectedRegion(id);
+    player.current?.pause(); setListenOnly(false);
     if (draft.frameMs !== null && !atReference) { player.current?.pause(); seek(draft.frameMs); }
-    focusOpinion();
+  }
+  function removeRegion(id: number) {
+    patch({ regions: regions.filter(region => region.id !== id) });
+    if (selectedRegion === id) setSelectedRegion(null);
+    if (commentRegionId === id) setCommentRegionId(null);
   }
   function actualTime() { return clampMs(Math.round((player.current?.currentTime ?? currentMs / 1000) * 1000), durationMs); }
   function seek(ms: number) {
@@ -622,7 +629,11 @@ export function ReviewDesk() {
     void captureFrame(position, draft, view.kind === 'edit');
   }
   function finishFrameSelection() {
-    setSelecting(null); gestureBackup.current = null; focusOpinion();
+    const blank = missingRegionComment(draft);
+    if (blank) { editRegionComment(blank.id); setFeedback(`请填写框 ${blank.id} 的意见，或删除此框。`); return; }
+    setSelecting(null); setCommentRegionId(null); gestureBackup.current = null;
+    setFeedback('');
+    requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>('.save-note')?.focus({ preventScroll: true }));
   }
   function showNote(note: ReviewNote) { request({ type: 'detail', note }); }
   function discardCurrent() {
@@ -879,7 +890,7 @@ export function ReviewDesk() {
     {!reading && (draft.mode || regions.length > 0 || clearedMarks) && <div className="marking-actions">
       <Button size="small" danger icon={<DeleteOutlined />} disabled={locked || !(draft.mode || regions.length || draft.reference || draft.snapshot)} onClick={() => clearMarks()}>清空本条全部标记</Button>
       {clearedMarks && <Button size="small" icon={<UndoOutlined />} disabled={locked} onClick={restoreClearedMarks}>恢复刚清空的标记</Button>}
-      <small>{clearedMarks ? '标记已清空，意见文字保留。重新标记前可恢复。' : '保留意见文字'}</small>
+      <small>{clearedMarks ? '标记和各框文字可一起恢复；整条意见仍保留。' : '各框文字可随标记恢复'}</small>
     </div>}
     {reading ? <>{draft.text && <div className="note-read-text">{regions.length > 0 && <strong className="comment-heading">本条意见</strong>}{draft.text}</div>}
       {regions.length > 0 && <div className="region-comments" aria-label="各框补充说明">{regions.map(region => <div key={region.id} data-region-comment={region.id} className={selectedRegion === region.id ? 'is-active' : ''}><Button size="small" type={selectedRegion === region.id ? 'primary' : 'default'} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null) { player.current?.pause(); seek(draft.frameMs); } }}>框 {region.id}</Button><p>{region.text || (draft.text ? '见本条意见，无单独补充' : '未单独补充')}</p></div>)}</div>}
@@ -891,26 +902,25 @@ export function ReviewDesk() {
         {draft.mode === 'range' && <Form.Item label="结束时间"><Input aria-label="结束时间" value={draft.endText} placeholder="00:00.000" onChange={event => patch({ endText: event.target.value })} /></Form.Item>}</div>}
       {draft.mode === 'range' && <div className="capture-row"><Button type="link" size="small" onClick={() => patch({ startText: formatTime(actualTime()) })}>设当前为开始</Button><Button type="link" size="small" onClick={() => patch({ endText: formatTime(actualTime()) })}>设当前为结束</Button></div>}
       <Form.Item label="问题类别（可选）"><Select aria-label="问题类别" allowClear value={draft.topic ?? undefined} placeholder="画面、字幕、声音、节奏…" options={Object.entries(TOPIC_LABEL).filter(([key]) => !media?.isAudio || key !== 'visual').map(([value, label]) => ({ value, label }))} onChange={value => patch({ topic: (value ?? null) as ReviewTopic | null })} /></Form.Item></details>
-      <Form.Item label={commentRegion ? `正在补充：框 ${commentRegion.id}` : '填写意见'} htmlFor="opinion-text">
-        {commentRegion && <div className="region-comment-navigation">
-          <Button size="small" type="link" icon={<ArrowLeftOutlined />} onClick={() => { setCommentRegionId(null); focusOpinion(); }}>返回整条意见</Button>
-          <Select size="small" aria-label="选择要补充说明的框" value={commentRegion.id} options={regions.map(region => ({ value: region.id, label: `框 ${region.id}${region.text?.trim() ? ' · 已填写' : ''}` }))} onChange={editRegionComment} />
-        </div>}
-        {regions.length > 0 && <p id="opinion-scope-hint" className="opinion-scope-hint">{commentRegion ? `只写框 ${commentRegion.id} 的具体问题，不必每个框都填。` : regionCommentCount ? `已有 ${regionCommentCount} 个框的说明；这里可补充共同意见。` : '直接写在这里，适用于本条全部标记。'}</p>}
-        <Input.TextArea id="opinion-text" aria-label={commentRegion ? `框 ${commentRegion.id} 的补充说明` : '填写意见'} aria-describedby={regions.length ? 'opinion-scope-hint' : undefined} value={commentRegion ? commentRegion.text ?? '' : draft.text} maxLength={2000} autoSize={{ minRows: regions.length ? 2 : 3, maxRows: 7 }} placeholder={commentRegion ? `框 ${commentRegion.id} 这里有什么问题，希望怎么改？` : '这段画面、声音、字幕或节奏，希望怎么改？'} onChange={event => commentRegion ? patch({ regions: regions.map(region => region.id === commentRegion.id ? { ...region, text: event.target.value } : region) }, false) : patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} />
-        {regions.length > 0 && !commentRegion && <Button className="region-comment-entry" type="link" size="small" onClick={() => editRegionComment(regions.find(region => region.text?.trim())?.id ?? regions[0].id)}>{regionCommentCount ? `查看或修改各框说明（已填 ${regionCommentCount} 处）` : '分别给各框补充说明（可选）'}</Button>}
-      </Form.Item>
+      {regions.length > 0 && <div className="region-summary"><strong>画面意见 · 已填写 {regionCommentCount}/{regions.length} 处</strong><p>每个框直接在画面旁写意见。点击下方框号可填写或修改；全部写好后保存整条意见。</p><Button onClick={() => editRegionComment(missingRegionComment(draft)?.id ?? regions[0].id)}>{missingRegionComment(draft) ? '填写待完成的框' : '查看各框意见'}</Button></div>}
+      {(!regions.length || draft.text !== '') && <Form.Item label={regions.length ? '原有整条意见' : '填写意见'} htmlFor="opinion-text">
+        {regions.length > 0 && <p className="opinion-scope-hint">这是画框前已有的文字，会一起保留；各框的问题写在画面旁的浮卡中。</p>}
+        <Input.TextArea id="opinion-text" aria-label={regions.length ? '原有整条意见' : '填写意见'} value={draft.text} maxLength={2000} autoSize={{ minRows: 3, maxRows: 7 }} placeholder="这段画面、声音、字幕或节奏，希望怎么改？" onChange={event => patch({ text: event.target.value })} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); void save(); } }} />
+      </Form.Item>}
       <Button className="save-note" block type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online' || !!problem}>{selecting === 'frame' ? '完成框选并保存整条意见' : view.kind === 'edit' ? '保存这条修改' : '保存整条意见'}</Button>
       <p className="note-safe" role="status">{service.state !== 'online' ? '连接不可用，当前无法保存。输入仍在本页，请按上方提示重新打开校对室。' : !editing ? '本窗口只读；明确取得编辑权后才能保存，当前输入仍保留。' : problem || (regions.length ? '一次保存本条意见和所有框的说明。' : '保存后，可以继续写下一条意见。')}</p>
       {view.kind === 'edit' && <Button type="link" disabled={locked || service.state !== 'online'} onClick={() => selected && request({ type: 'detail', note: selected })}>取消编辑，查看原意见</Button>}
     </Form>}
     {!reading && (regions.length > 0 || regionHistory.canUndo || regionHistory.canRedo) && <div className="region-edit-tools" aria-label="画面框操作">
-      {regions.length > 0 && <><small>画面标记 · 点击框号定位，叉号删除</small><div className="region-locations" role="group" aria-label="定位或删除画面框">
-        {regions.map(region => <span className={`region-chip${selectedRegion === region.id ? ' is-active' : ''}`} key={region.id}>
-          <Button size="small" type="text" disabled={locked} aria-pressed={selectedRegion === region.id} title={`定位画面中的框 ${region.id}`} onClick={() => { setSelectedRegion(region.id); if (draft.frameMs !== null && !atReference) { player.current?.pause(); seek(draft.frameMs); } }}>框 {region.id}</Button>
-          <Button size="small" type="text" danger disabled={locked} icon={<CloseOutlined />} aria-label={`删除框 ${region.id}`} title={`删除框 ${region.id}`} onClick={() => { patch({ regions: regions.filter(item => item.id !== region.id) }); if (selectedRegion === region.id) setSelectedRegion(null); }} />
-        </span>)}
-      </div></>}
+      {regions.length > 0 && <><small>画面标记 · 点框号写意见，叉号删除</small>{[false, true].map(filled => {
+        const group = regions.filter(region => !!region.text?.trim() === filled);
+        return group.length > 0 && <div className={`region-status-group ${filled ? 'is-filled' : 'is-pending'}`} key={String(filled)}><strong>{filled ? '✓ 已填写' : '○ 待填写'} · {group.length}</strong><div className="region-locations" role="group" aria-label={filled ? '已填写的画面框' : '待填写的画面框'}>
+          {group.map(region => <span className={`region-chip ${filled ? 'is-filled' : 'is-pending'}${selectedRegion === region.id ? ' is-active' : ''}`} key={region.id}>
+            <Button size="small" type="text" disabled={locked} aria-pressed={selectedRegion === region.id} title={`填写或修改框 ${region.id} 的意见`} onClick={() => editRegionComment(region.id)}>框 {region.id}</Button>
+            <Button size="small" type="text" danger disabled={locked} icon={<CloseOutlined />} aria-label={`删除框 ${region.id}`} title={`删除框 ${region.id}`} onClick={() => removeRegion(region.id)} />
+          </span>)}
+        </div></div>;
+      })}</>}
       <div className="region-history"><Button size="small" icon={<UndoOutlined />} disabled={locked || !regionHistory.canUndo} onClick={() => undoRegion()}>撤回上一步框选</Button><Button size="small" icon={<RedoOutlined />} disabled={locked || !regionHistory.canRedo} onClick={() => undoRegion(true)}>恢复上一步框选</Button></div>
       <small>只撤回或恢复画面框的新增、移动和删除；时间、意见文字不变。</small>
     </div>}
@@ -929,7 +939,7 @@ export function ReviewDesk() {
   const pendingProblem = pendingDrafts.filter(hasDraftWork).map(value => draftProblem(value, durationMs, selectionBlocksSave)).find(Boolean) ?? '';
   const taskPanel = <ReviewTasks data={tasks.data} error={tasks.error} currentId={activeTask?.id ?? null} page={tasks.page} includeClosed={tasks.closed} query={tasks.query} onQuery={tasks.setQuery} online={service.state === 'online'} filter={tasks.filter} sort={tasks.sort} onFilter={tasks.setFilter} onSort={tasks.setSort} onPage={tasks.setPage} onClosed={tasks.setClosed} onRefresh={() => void tasks.refresh()} onOpen={task => request({ type: 'task', task })} onSelectFile={task => chooseFile(undefined, task)} onNew={() => chooseFile(undefined, null, true)} onStatus={(task, status) => void taskStatus(task, status)} />;
   const otherTasks = Math.max(0, (tasks.data?.active ?? 0) - (activeTask?.status === 'waiting' ? 1 : 0));
-  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="review-0-3-0-beta-9">
+  const app = <div className="review-app scheme-a" ref={root} data-ui-revision="review-0-3-0-beta-10">
     <header className="brandbar"><div className="brand"><img src="/brand/review-mark.svg" alt="Media Review" /><strong>Media Review</strong><span className="tool-name">音视频校对</span></div>
       <div className="brand-actions"><Button onClick={() => setReadinessOpen(true)}>本机可用性</Button>{activeTask && <Button onClick={() => setVersionOpen(true)}>版本与返修 · V{activeTask.version?.number ?? 1}</Button>}<span className="service-status-actions"><ServiceBadge state={service.state} />{service.state !== 'online' && service.state !== 'connecting' && <ServiceRecoveryButton compact state={service.state} launcher={launcher} waiting={!!recoveryWait} onStart={requestNativeStart} />}</span><Badge count={tasks.data?.active ?? 0} color="#a76543"><Button onClick={() => setTasksOpen(true)}>校对任务</Button></Badge><Dropdown trigger={['click']} menu={{ items: [...(media ? [{ key: 'suspend', label: '挂起当前任务 · 释放媒体' }, { key: 'end', label: '结束当前任务 · 保留历史' }, { type: 'divider' as const }] : []), { key: 'restart', label: '重启校对服务', disabled: service.state !== 'online' || !!recoveryWait || !!busy }, { key: 'exit', label: '退出整个校对室', danger: true }], onClick: ({ key }) => { if (key === 'suspend') request({ type: 'suspend' }); else if (key === 'end') request({ type: 'end' }); else if (key === 'restart') void requestRestart(); else request({ type: 'exit' }); } }}><Button disabled={busy === 'saving'}>任务操作</Button></Dropdown><span className="privacy"><SafetyCertificateOutlined />素材留在本机</span>{media && <><span className="save-indicator" role="status">{stateLabel}</span><Button icon={screen === 'home' ? <ArrowLeftOutlined /> : <HomeOutlined />} disabled={busy === 'saving'} onClick={() => navigate(screen === 'home' ? 'review' : 'home')}>{screen === 'home' ? '返回当前素材' : '回到主页'}</Button></>}<Button icon={<FolderOpenOutlined />} disabled={busy === 'saving'} onClick={() => chooseFile()}>打开其他素材</Button>{media && <Button className="save-button" icon={<SaveOutlined />} disabled={locked || service.state !== 'online'} loading={busy === 'saving'} onClick={() => void save()}>保存进度</Button>}{media && <Button type="primary" icon={<CommentOutlined />} loading={busy === 'saving'} disabled={locked || service.state !== 'online'} onClick={() => void save(true)}>{!notes.length && !hasDraftWork(newDraft) && !editChanged && !parked.some(hasDraftWork) ? '审阅完毕，没有意见' : '完成审阅并交接'}</Button>}</div>
       <input ref={fileInput} type="file" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) { const task = chosenManualTask.current, newTask = chosenNewTask.current, readOnly = chosenReadOnly.current; chosenManualTask.current = null; chosenNewTask.current = false; chosenReadOnly.current = false; request({ type: 'file', file, newTask, readOnly, ...(task ? { task } : {}) }); } }} />
@@ -946,7 +956,7 @@ export function ReviewDesk() {
       {recordError && <Alert type="error" showIcon title={activeTask ? '已有意见未能读取，原记录保留' : '任务尚未登记，本页文件保留'} description={recordError} action={<Button onClick={() => setLoadAttempt(value => value + 1)}>重试读取</Button>} />}
       <div className="workspace"><section className="review-main" aria-label="媒体审阅区">
         <section ref={videoSurface} className={`surface${presentation.expanded ? ' is-expanded' : ''}`} data-lenis-prevent={presentation.expanded || presentation.fullscreen ? '' : undefined} aria-label={presentation.expanded || presentation.fullscreen ? '放大的视频播放器' : '播放器'}><div className="surface-tools"><span className="surface-label" title={media.file.name}>{presentation.expanded || presentation.fullscreen ? media.file.name : '定位问题'}</span><div className="surface-actions">
-          {selecting === 'frame' ? <><Button className="finish-frame" type="primary" icon={<CheckOutlined />} disabled={locked} onClick={finishFrameSelection}>完成框选</Button><Button danger className="cancel-frame" disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消本次框选</Button><span className="frame-selection-count">已标 {regions.length} 处 · 可连续画框</span></> : <>
+          {selecting === 'frame' ? <><Button className="finish-frame" type="primary" icon={<CheckOutlined />} disabled={locked} onClick={finishFrameSelection}>完成框选</Button><Button danger className="cancel-frame" disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消本次框选</Button><span className="frame-selection-count">已填 {regionCommentCount}/{regions.length} 处 · 可连续画框</span></> : <>
             <Button disabled={locked || service.state !== 'online'} icon={<ClockCircleOutlined />} onClick={() => requestTarget('point')}>标记时间点</Button>
             <Button type={pendingRange ? 'primary' : 'default'} disabled={locked || service.state !== 'online'} icon={<ScissorOutlined />} onClick={markRangeBoundary}>{pendingRange ? '标记终点' : !reading && draft.mode === 'range' ? '重标起点' : '标记起点'}</Button>
             {!reading && (draft.mode === 'range' || draft.mode === 'point') && <Button danger className="clear-time" icon={<CloseOutlined />} disabled={locked} onClick={() => clearMarks(true)}>{draft.mode === 'range' ? '清空时间段' : '清空时间点'}</Button>}
@@ -954,16 +964,18 @@ export function ReviewDesk() {
             {selecting === 'range' && <Button danger className="clear-time" disabled={busy === 'saving'} icon={<CloseOutlined />} onClick={cancelSelection}>取消本次选段</Button>}
           </>}
         </div></div>
-          <div ref={stage} className={`viewer ${listenOnly ? 'audio-mode' : ''} ${media.width / media.height > 1 ? 'landscape' : ''}`}>
+          <div className="frame-workspace"><div ref={stage} className={`viewer ${listenOnly ? 'audio-mode' : ''} ${media.width / media.height > 1 ? 'landscape' : ''}`}>
             {media.isAudio ? <audio ref={player as React.RefObject<HTMLAudioElement>} data-primary-media src={media.url} preload="metadata" onLoadedMetadata={metadata} onDurationChange={metadata} onTimeUpdate={onTimeUpdate} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setMediaError('浏览器无法播放此音频，请检查编码或换用可播放文件。'); setBusy(null); analysis.stop(); }} /> : <div className="video-holder" style={{ width: frameSize.width, height: frameSize.height, visibility: listenOnly ? 'hidden' : undefined }}>
               <video ref={player as React.RefObject<HTMLVideoElement>} data-primary-media src={media.url} playsInline preload="metadata" aria-label="当前原始视频" onLoadedMetadata={metadata} onDurationChange={metadata} onTimeUpdate={onTimeUpdate} onPlay={() => { setPlaying(true); setSelecting(null); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setMediaError('浏览器无法播放此视频，请检查编码或换用MP4。'); setBusy(null); analysis.stop(); }} />
               <VideoPreview videoRef={player} sourceKey={media.url} active={screen === 'review' && !listenOnly} />
               {!playing && !listenOnly && reading && atReference && regions.length > 0 && <div className="frame-layer readonly"><FrameRegions regions={regions} selected={selectedRegion} onSelect={focusRegion} /></div>}
-              {!playing && !listenOnly && !reading && !locked && !capturing && (selecting === 'frame' || (atReference && regions.length > 0)) && <FrameCanvas key={view.kind + '-' + (draft.id ?? 'new') + '-' + draft.frameMs} regions={regions} regionSerial={draft.regionSerial ?? 0} selected={selectedRegion} onSelect={focusRegion} drawing={selecting === 'frame'} onChange={value => patch({ regions: value })} onDone={region => patch({ regions: [...regions, region] })} />}
-              {selecting === 'frame' && <span className="draw-hint">拖出多个框；写好意见后可直接保存</span>}
+              {!playing && !listenOnly && !reading && !locked && !capturing && (selecting === 'frame' || (atReference && regions.length > 0)) && <FrameCanvas key={view.kind + '-' + (draft.id ?? 'new') + '-' + draft.frameMs} regions={regions} regionSerial={draft.regionSerial ?? 0} selected={selectedRegion} onSelect={focusRegion} drawing={selecting === 'frame'} onChange={value => patch({ regions: value })} onDone={region => { patch({ regions: [...regions, region] }); setSelectedRegion(region.id); setCommentRegionId(region.id); }} />}
+              {selecting === 'frame' && <span className="draw-hint">拖框 → 在浮卡写意见 → 完成后继续画框</span>}
             </div>}
             {listenOnly ? <div className="audio-face"><div className="audio-title"><AudioOutlined />听原声，按位置留下意见</div><div className="audio-large-clock">{formatTime(currentMs, false)}<small>.{String(currentMs % 1000).padStart(3, '0')}</small></div><p className="audio-caption">{activeCue?.text ?? '点击右侧一句台词，或在下方时间轴上找到位置。'}</p><div className="audio-mini"><InfoCircleOutlined />播放位置只描述正在听哪里，不会改变意见目标。</div></div> : <><div className="viewer-side"><span>正在看的位置</span><strong>{formatTime(currentMs)}</strong><span>框选会暂停在此刻</span></div><div className="viewer-hint"><InfoCircleOutlined />继续播放时旧框会隐藏，参考画面仍留在意见旁。</div></>}
             {mediaError && <div className="media-error" role="alert">{mediaError}</div>}
+          </div>
+          {!reading && !playing && !listenOnly && atReference && <FrameComment region={commentRegion} stage={stage} frameMs={draft.frameMs} reduced={reduced} disabled={locked} drawing={selecting === 'frame'} onChange={(id, text) => patch({ regions: regions.map(region => region.id === id ? { ...region, text } : region) }, false)} onComplete={() => { setCommentRegionId(null); setFeedback(''); }} onDelete={removeRegion} />}
           </div>
           <div className="transport"><Button className="transport-play" aria-label={playing ? '暂停' : '播放'} icon={playing ? <PauseOutlined /> : <PlayCircleOutlined />} disabled={!durationMs || capturing} onClick={() => void togglePlay()} /><strong className="clock">{formatTime(currentMs)}</strong><small>/ {formatTime(durationMs, false)}</small><Slider className="media-seek" ariaLabelForHandle="播放位置" min={0} max={Math.max(1, durationMs)} step={10} value={currentMs} onChange={seek} tooltip={{ formatter: value => formatTime(value ?? 0) }} disabled={!durationMs || capturing} /><Select className="speed-select" size="small" aria-label="播放速度" getPopupContainer={node => node.parentElement!} value={rate} options={[.5, .75, 1, 1.25, 1.5, 2].map(value => ({ value, label: `${value}×` }))} onChange={value => { setRate(value); if (player.current) player.current.playbackRate = value; }} />{!media.isAudio && !listenOnly && <div className="video-view-actions"><Button data-player-resize aria-label={presentation.expanded || presentation.fullscreen ? '收起视频画面' : '放大视频画面'} aria-pressed={presentation.expanded} icon={presentation.expanded || presentation.fullscreen ? <ShrinkOutlined aria-hidden /> : <ExpandAltOutlined aria-hidden />} disabled={presentation.pending} onClick={presentation.toggleExpanded}>{presentation.expanded || presentation.fullscreen ? '收起' : '放大'}</Button><Button aria-label={presentation.fullscreen ? '退出视频全屏' : '视频全屏'} aria-pressed={presentation.fullscreen} icon={presentation.fullscreen ? <FullscreenExitOutlined aria-hidden /> : <FullscreenOutlined aria-hidden />} loading={presentation.pending} onClick={() => void presentation.toggleFullscreen()}>{presentation.fullscreen ? '退出全屏' : '全屏'}</Button></div>}</div>
         </section>
