@@ -82,6 +82,13 @@ if (Test-Path -LiteralPath $config) {
   if ($previous.runtimeRoot -ne $AppRoot -and -not $ReplaceExisting) { Write-Warning '启动资料已绑定另一安装，未替换；本副本仍可从桌面启动。'; return }
 }
 $value = [ordered]@{format=$owner;uiRevision=$revision;dataRoot=$DataRoot;runtimeRoot=$AppRoot;node=$Node}
+if ($oldCommand -eq $command -and (Test-Path -LiteralPath $config)) {
+  Assert-Ordinary $config $false
+  $previous = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
+  $matching = $true
+  foreach ($field in $value.Keys) { if ($previous.$field -ne $value[$field]) { $matching = $false; break } }
+  if ($matching) { Write-Output ($name + '：已核对并复用现有页面启动入口。'); return }
+}
 # 协议只传固定start网址；直接调用Node，不经cmd或PowerShell解释网址内容。
 $created = $null -eq $oldCommand
 try {

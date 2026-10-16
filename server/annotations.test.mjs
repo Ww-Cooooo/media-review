@@ -7,7 +7,7 @@ import { createReviewServer } from './app.mjs';
 import { validateRecord, REGIONS_FORMAT } from './review-record.mjs';
 import { validateWorkspace } from './review-workflow.mjs';
 import { exportReview } from './review-export.mjs';
-import { emptyDraft, draftProblem, draftToNote } from '../src/lib/review-draft.ts';
+import { emptyDraft, draftMarks, clearedDraftMarks, draftProblem, draftToNote } from '../src/lib/review-draft.ts';
 import { regionsOf } from '../src/lib/review.ts';
 
 const fingerprint = 'c'.repeat(64);
@@ -15,6 +15,29 @@ const media = { name: 'annotation-fixture.mp4', size: 100, type: 'video/mp4', du
 const regions = [1, 2, 3].map(id => ({ id, rect: { x: .1 * id, y: .12 * id, width: .2, height: .15 } }));
 const reference = { frameMs: 7000, fileName: 'a'.repeat(64) + '.jpg', width: 3, height: 2 };
 const note = { id: 'three-regions', kind: 'modify', startMs: 2000, endMs: 10000, text: '1：字幕；2：人物；3：背景', regions, reference };
+
+test('清空时间保留独立画面；清空全部仅移除本条标记，恢复不覆盖新写的文字', () => {
+  const draft = { ...emptyDraft(), id: 'editing-existing', mode: 'range', startText: '00:02.000', endText: '00:10.000', text: note.text, topic: 'visual', regions, regionSerial: 3, frameMs: 7000, reference };
+  const frameOnly = { ...draft, ...clearedDraftMarks(draft, true) };
+  assert.equal(draftProblem(frameOnly, 16000), '');
+  assert.deepEqual([frameOnly.mode, frameOnly.startText, frameOnly.endText], ['frame', '00:07.000', '']);
+  assert.deepEqual(frameOnly.regions, regions);
+  assert.deepEqual(frameOnly.reference, reference);
+  const cleared = { ...draft, ...clearedDraftMarks(draft) };
+  assert.deepEqual([cleared.id, cleared.text, cleared.topic, cleared.regionSerial], [draft.id, draft.text, draft.topic, 3]);
+  assert.deepEqual([cleared.mode, cleared.startText, cleared.endText, cleared.frameMs, cleared.reference, cleared.snapshot, cleared.regions], [null, '', '', null, null, null, []]);
+  const restored = { ...cleared, text: '清空后继续写的意见', ...draftMarks(draft) };
+  assert.equal(restored.text, '清空后继续写的意见');
+  assert.deepEqual(restored.regions, regions);
+  assert.equal(restored.startText, draft.startText);
+  for (const endText of ['', '00:10.000']) {
+    const range = { ...draft, regions: [], frameMs: null, reference: null, endText };
+    const result = { ...range, ...clearedDraftMarks(range, true) };
+    assert.equal(result.mode, null);
+    assert.equal(result.startText, '');
+    assert.equal(result.text, note.text);
+  }
+});
 
 test('时间段与独立参考帧、三个区域同时成立；起点未闭合不能误保存', () => {
   const { rect: _rect, ...base } = emptyDraft();

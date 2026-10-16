@@ -49,10 +49,10 @@ export async function atomicJson(file, value) {
   try { await fs.writeFile(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' }); await fs.rename(temp, file); }
   finally { await fs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 }
-export async function findCommand(name) {
+export async function findCommand(name, usable = async () => true) {
   try {
     const { stdout } = await execute(path.join(process.env.SystemRoot || 'C:/Windows', 'System32/where.exe'), [name], { windowsHide: true, timeout: 5000 });
-    for (const file of stdout.trim().split(/\r?\n/u)) if (await ordinaryFile(file)) return file;
+    for (const file of stdout.trim().split(/\r?\n/u)) if (await ordinaryFile(file) && await usable(file)) return file;
   } catch { /* Only the explicit PATH is inspected, never the whole disk. */ }
   return null;
 }

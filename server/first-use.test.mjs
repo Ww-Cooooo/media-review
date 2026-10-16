@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { mergedTools, subtitleCheck } from '../skill/scripts/setup.mjs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mergedTools, subtitleCheck, selectExistingTool } from '../skill/scripts/setup.mjs';
 import { safeArchiveEntry, ordinaryDirectory, atomicJson, readObject, removeOwned, download } from '../skill/scripts/setup-support.mjs';
 
 test('first-use retains custom settings and distinguishes valid captions from mere tool presence', () => {
@@ -17,6 +19,25 @@ test('first-use retains custom settings and distinguishes valid captions from me
   assert.throws(() => subtitleCheck('', 3000));
   assert.throws(() => subtitleCheck(valid.replace('02,500', '12,500'), 3000));
   assert.throws(() => subtitleCheck(valid.replace('这是字幕测试。', 'unrelated words'), 3000));
+});
+
+test('startup checks reuse valid tools and recover stale paths before provisioning', async () => {
+  let acquired = 0, discovered = 0;
+  const choose = options => selectExistingTool({
+    configured: 'old-path', discover: async () => { discovered++; return 'path-tool'; }, managed: 'private-cache',
+    usable: async file => ['configured-tool', 'path-tool', 'private-cache', 'downloaded-tool'].includes(file),
+    acquire: async () => { acquired++; return 'downloaded-tool'; }, ...options,
+  });
+  assert.deepEqual(await choose({ configured: 'configured-tool' }), { file: 'configured-tool', reused: true });
+  assert.equal(discovered, 0);
+  assert.deepEqual(await choose({}), { file: 'path-tool', reused: true });
+  assert.deepEqual(await choose({ discover: async () => null }), { file: 'private-cache', reused: true });
+  assert.equal(acquired, 0, 'valid configured, PATH and managed files must not trigger downloads');
+  await assert.rejects(choose({ override: 'explicit-but-broken' }), /指定的工具/u);
+  assert.equal(acquired, 0, 'an explicit choice is not silently replaced');
+  assert.deepEqual(await choose({ discover: async () => null, managed: null }), { file: 'downloaded-tool', reused: false });
+  assert.equal(acquired, 1);
+  await assert.rejects(choose({ discover: async () => null, managed: null, acquire: async () => 'still-broken' }), /仍不可用/u);
 });
 test('first-use rejects archive traversal, wrong cleanup boundaries and non-HTTPS downloads', async () => {
   for (const name of ['../outside', '/absolute', 'C:/escape', 'safe/../escape', 'safe\\..\\escape', 'safe:stream']) assert.equal(safeArchiveEntry(name), false);
@@ -52,4 +73,15 @@ test('bootstrap Node pin and release metadata match the maintained source versio
   assert.equal(UI_REVISION, `review-${pkg.version.replaceAll('.', '-')}`);
   assert.ok(bootstrap.includes(pins.node.url)); assert.ok(bootstrap.includes(pins.node.sha256));
   assert.ok(bootstrap.includes(pins.node.fallbackUrl)); assert.ok(bootstrap.includes(pins.node.fallbackSha256));
+});
+
+test('Windows bootstrap reports preparation failure instead of success', { skip: process.platform !== 'win32' }, () => {
+  const bootstrap = fileURLToPath(new URL('../skill/scripts/first-use.cmd', import.meta.url));
+  const result = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${bootstrap}" --invalid-setup-option"`], {
+    windowsHide: true, windowsVerbatimArguments: true, encoding: 'utf8', timeout: 30_000,
+    env: { ...process.env, PATH: `${path.dirname(process.execPath)};${process.env.PATH ?? ''}` },
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /参数无效/u);
 });

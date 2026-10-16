@@ -61,7 +61,7 @@ export async function productRoute(service, pathname, body, context) {
     const available = async fn => { try { return !!await fn?.(); } catch { return false; } };
     const [ffmpeg, whisper, model] = await Promise.all([available(tools?.ffmpeg), available(tools?.whisper), available(tools?.model)]);
     const metadata = await readJson(path.join(service.root, 'package.json'), 100000).catch(() => ({}));
-    return { runtime: UI_REVISION, baseVersion: metadata.version ?? '未知', localRevision: metadata.localRevision ?? null, node: process.versions.node, ffmpeg, whisper, model, host: [...tasks.headers.values()].some(task => !task.manual) ? '本机已有 Agent 送片记录；当前对话是否已加载 Skill 需由宿主确认' : '尚无 Agent 送片记录，可由当前对话调用 after-export', playback: '取决于浏览器能否解码当前文件；打开文件后实际检查', publication: metadata.localRevision ? '本机定制版本；此页面不查询 GitHub 最新版本' : '公开版源码／发行包；此页面不查询 GitHub 最新版本', toolsHelp: '用安装入口连接现有媒体工具，或由 Agent 执行 doctor 排查；不会自动下载安装。' };
+    return { runtime: UI_REVISION, baseVersion: metadata.version ?? '未知', localRevision: metadata.localRevision ?? null, node: process.versions.node, ffmpeg, whisper, model, host: [...tasks.headers.values()].some(task => !task.manual) ? '本机已有 Agent 送片记录；当前对话是否已加载 Skill 需由宿主确认' : '尚无 Agent 送片记录，可由当前对话调用 after-export', playback: '取决于浏览器能否解码当前文件；打开文件后实际检查', publication: metadata.localRevision ? '本机定制版本；此页面不查询 GitHub 最新版本' : '公开版源码／发行包；此页面不查询 GitHub 最新版本', toolsHelp: '首次使用由 Agent 说明并准备缺少的工具和模型；以后打开先检查，可用就复用。本页只查看状态，不触发下载。' };
   }
   return null;
 }

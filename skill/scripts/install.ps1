@@ -87,33 +87,41 @@ if ($tools.Count) {
 }
 Assert-OrdinaryDirectory $DesktopDirectory
 $shortcutPath = Join-Path $DesktopDirectory 'Media Review.lnk'
-$shortcutArgs = '"' + (Join-Path $target 'app\server\open.mjs') + '"'
+$legacyShortcutArgs = '"' + (Join-Path $target 'app\server\open.mjs') + '"'
+$shortcutArgs = '"' + (Join-Path $target 'scripts\setup.mjs') + '" --desktop-dir "' + ($DesktopDirectory -replace '(\\+)$','$1$1') + '"'
 if ($env:MEDIA_REVIEW_DATA_DIR) {
   if ($env:MEDIA_REVIEW_DATA_DIR -match '["\r\n\x00]') { throw '桌面入口需要明确的本机资料目录。' }
   $shortcutArgs += ' --data-dir "' + ([IO.Path]::GetFullPath($env:MEDIA_REVIEW_DATA_DIR) -replace '(\\+)$','$1$1') + '"'
+  $legacyShortcutArgs += ' --data-dir "' + ([IO.Path]::GetFullPath($env:MEDIA_REVIEW_DATA_DIR) -replace '(\\+)$','$1$1') + '"'
 }
+if ($SkipPageLauncher) { $shortcutArgs += ' --skip-page-launcher' }
 $shell = New-Object -ComObject WScript.Shell
 if (Test-Path -LiteralPath $shortcutPath) {
   Assert-OrdinaryFile $shortcutPath
   $old = $shell.CreateShortcut($shortcutPath)
-  if ($old.TargetPath -ne $node -or $old.Arguments -ne $shortcutArgs) {
+  if ($old.TargetPath -ne $node -or $old.Arguments -notin @($shortcutArgs,$legacyShortcutArgs)) {
     $matching = $null
     foreach ($file in Get-ChildItem -LiteralPath $DesktopDirectory -Filter 'Media Review-*.lnk' -File) {
       Assert-OrdinaryFile $file.FullName
       $existing = $shell.CreateShortcut($file.FullName)
-      if ($existing.TargetPath -eq $node -and $existing.Arguments -eq $shortcutArgs) { $matching = $file.FullName; break }
+      if ($existing.TargetPath -eq $node -and $existing.Arguments -in @($shortcutArgs,$legacyShortcutArgs)) { $matching = $file.FullName; break }
     }
     $shortcutPath = if ($matching) { $matching } else { Join-Path $DesktopDirectory ('Media Review-' + [Guid]::NewGuid().ToString('N').Substring(0,6) + '.lnk') }
   }
 }
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $node
-$shortcut.Arguments = $shortcutArgs
-$shortcut.WorkingDirectory = Join-Path $target 'app'
-$shortcut.IconLocation = (Join-Path $target $iconRelative) + ',0'
-$shortcut.Description = '启动 Media Review 本机音视频校对室：按需启动或复用Node.js服务，不上传素材，不开机自启'
-$shortcut.WindowStyle = 7
-$shortcut.Save()
+$workingDirectory = Join-Path $target 'app'
+$iconLocation = (Join-Path $target $iconRelative) + ',0'
+$description = '启动 Media Review：先检查已有工具，仅补缺项；按需启动或复用本机服务'
+if ($shortcut.TargetPath -ne $node -or $shortcut.Arguments -ne $shortcutArgs -or $shortcut.WorkingDirectory -ne $workingDirectory -or $shortcut.IconLocation -ne $iconLocation -or $shortcut.Description -ne $description -or $shortcut.WindowStyle -ne 7) {
+  $shortcut.TargetPath = $node
+  $shortcut.Arguments = $shortcutArgs
+  $shortcut.WorkingDirectory = $workingDirectory
+  $shortcut.IconLocation = $iconLocation
+  $shortcut.Description = $description
+  $shortcut.WindowStyle = 7
+  $shortcut.Save()
+} else { Write-Output '桌面入口检查通过，直接复用。' }
 if (-not $SkipPageLauncher) {
   $homeData = if ($env:MEDIA_REVIEW_DATA_DIR) { $env:MEDIA_REVIEW_DATA_DIR } else { Join-Path $HOME '.media-review-desk' }
   Assert-OrdinaryDirectory (Join-Path $homeData 'data')

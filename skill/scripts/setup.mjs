@@ -15,6 +15,20 @@ async function probe(file, args, check = () => true) {
   if (!await ordinaryFile(file)) return false;
   try { const result = await run(file, args); return check(result.stdout + result.stderr); } catch { return false; }
 }
+export async function selectExistingTool({ override, configured, discover, managed, usable, acquire }) {
+  if (override) {
+    if (!await usable(override)) throw new Error('指定的工具不能运行，原配置保留；请 Agent 核对该路径。');
+    return { file: override, reused: true };
+  }
+  if (configured && await usable(configured)) return { file: configured, reused: true };
+  const found = await discover?.();
+  for (const file of new Set([found, managed].filter(Boolean))) {
+    if (file !== configured && await usable(file)) return { file, reused: true };
+  }
+  const file = await acquire();
+  if (!await usable(file)) throw new Error('准备的工具仍不可用，保留现有文件；请 Agent 修复这一项，不重复安装整套环境。');
+  return { file, reused: false };
+}
 export function mergedTools(previous, selected) {
   if (!previous || typeof previous !== 'object' || Array.isArray(previous)) throw new Error('工具配置格式错误，未修改。');
   return { ...previous, ...selected };
@@ -67,7 +81,7 @@ export async function prepare(args = process.argv.slice(2)) {
   if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('请通过 scripts/first-use.cmd 自动准备 Node.js 24。');
   if (args.includes('--bootstrap-node')) return stableBootstrap(args);
   const flags = new Set(['--no-browser', '--skip-page-launcher', '--install', '--verify']);
-  const values = new Set(['--destination', '--desktop-dir', '--ffmpeg', '--whisper', '--model']);
+  const values = new Set(['--destination', '--desktop-dir', '--data-dir', '--ffmpeg', '--whisper', '--model']);
   const options = {};
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
@@ -76,45 +90,62 @@ export async function prepare(args = process.argv.slice(2)) {
     else throw new Error(`首次准备参数无效：${key}`);
   }
   if (options['--destination'] && !options['--install']) throw new Error('--destination 只用于 --install。');
+  if (options['--data-dir']) {
+    if (!path.isAbsolute(options['--data-dir'])) throw new Error('--data-dir 必须是绝对路径。');
+    process.env.MEDIA_REVIEW_DATA_DIR = options['--data-dir'];
+  }
   const root = dataRoot(), local = await ordinaryDirectory(path.join(root, 'data'));
   const releaseLock = await setupLock(local);
   let phase = 'package';
   try {
+    let receipt = await readObject(path.join(local, 'setup.json')).catch(() => null);
+    say(receipt?.verification?.passed
+      ? '正在检查已有程序、工具路径和配置；有效的直接复用，只修复缺失或失效的项目。'
+      : '首次准备会先检查本机环境；缺少的运行组件、音视频工具或语音模型可能需要联网下载和配置。全缺时约下载 0.8 GB，之后会复用，不会每次重装。');
     let pkg = await resolvePackage(skillRoot, pins.release, true);
     await validatePackage(pkg, pins.release);
     const runtime = await ordinaryDirectory(path.join(root, 'runtime'));
     phase = 'powershell';
-    let pwsh = await findCommand('pwsh');
-    if (!await probe(pwsh, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], value => Number(value.trim()) >= 7)) pwsh = await provision('powershell', pins.powershell, runtime);
-    if (!await probe(pwsh, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], value => Number(value.trim()) >= 7)) throw new Error('PowerShell 7 无法运行，未改用 Windows PowerShell 5.1。');
+    const usablePowerShell = file => probe(file, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], value => Number(value.trim()) >= 7);
+    const { file: pwsh } = await selectExistingTool({
+      configured: receipt?.runtime?.pwsh,
+      discover: () => findCommand('pwsh', usablePowerShell),
+      managed: path.join(runtime, `powershell-${pins.powershell.version}`, pins.powershell.entry),
+      usable: usablePowerShell, acquire: () => provision('powershell', pins.powershell, runtime),
+    });
     const configFile = path.join(local, 'tools.json');
     const configExists = await fs.lstat(configFile).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
     const previous = configExists ? await readObject(configFile) : {};
     const configBytes = configExists ? await fs.readFile(configFile) : null;
-    const selected = {}, reused = [];
+    const selected = {}, reused = [], prepared = [];
     for (const [key, command, override, checkArgs, check] of [
       ['ffmpeg', 'ffmpeg', '--ffmpeg', ['-version'], value => /ffmpeg version/u.test(value)],
       ['whisper_cpu', 'whisper-cli', '--whisper', ['--help'], value => /--model|\s-m\s/u.test(value)],
       ['model', null, '--model', null, null],
     ]) {
       phase = key;
-      let file = options[override] ? path.resolve(options[override]) : previous[key] ?? (command ? await findCommand(command) : null);
-      let valid = checkArgs ? await probe(file, checkArgs, check) : await ordinaryFile(file);
-      if (valid && key === 'ffmpeg') valid = await probe(path.join(path.dirname(file), 'ffprobe.exe'), ['-version'], value => /ffprobe version/u.test(value));
-      if (!valid && options[override]) throw new Error(`${override} 指定的工具不能运行，原配置保留；请 Agent 核对该路径。`);
-      if (valid) { reused.push(key); say(`复用已有${key === 'model' ? '语音模型' : key}。`); }
-      else file = await provision(key, pins[key], runtime);
-      selected[key] = file;
+      const usable = async file => {
+        const valid = checkArgs ? await probe(file, checkArgs, check) : await ordinaryFile(file);
+        return valid && (key !== 'ffmpeg' || await probe(path.join(path.dirname(file), 'ffprobe.exe'), ['-version'], value => /ffprobe version/u.test(value)));
+      };
+      const choice = await selectExistingTool({
+        override: options[override] ? path.resolve(options[override]) : null,
+        configured: previous[key], discover: command ? () => findCommand(command, usable) : null,
+        managed: path.join(runtime, `${key}-${pins[key].version}`, pins[key].entry), usable,
+        acquire: () => provision(key, pins[key], runtime),
+      });
+      (choice.reused ? reused : prepared).push(key);
+      say(`${choice.reused ? '检查通过，复用已有' : '已补齐'}${key === 'model' ? '语音模型' : key}。`);
+      selected[key] = choice.file;
     }
     const candidate = mergedTools(previous, selected);
     const sample = path.join(pkg, 'assets/setup-speech.wav');
     const facts = [];
     for (const file of [process.execPath, ...Object.values(selected), path.join(path.dirname(selected.ffmpeg), 'ffprobe.exe')]) {
       if (!await ordinaryFile(file)) throw new Error('工具或自检样本不可读，原配置保留。');
-      const stat = await fs.stat(file); facts.push([file, stat.size, stat.mtimeMs]);
+      const stat = await fs.stat(file); facts.push([await fs.realpath(file), stat.size, stat.mtimeMs]);
     }
     const signature = createHash('sha256').update(JSON.stringify({ version: pins.release, facts, sample: await hashFile(sample) })).digest('hex');
-    let receipt = await readObject(path.join(local, 'setup.json')).catch(() => null);
     let verification;
     if (!options['--verify'] && receipt?.signature === signature && receipt.verification?.passed) verification = { ...receipt.verification, reused: true };
     else {
@@ -152,7 +183,7 @@ export async function prepare(args = process.argv.slice(2)) {
     if (options['--skip-page-launcher']) installArgs.push('-SkipPageLauncher');
     await run(pwsh, installArgs, { timeout: 120_000, env: { ...process.env, PATH: `${path.dirname(process.execPath)};${path.dirname(pwsh)};${process.env.PATH ?? ''}` } });
     if (options.installedTo) pkg = options.installedTo;
-    receipt = { format: 'media-review-setup/v1', version: pins.release, signature, verification, reusedTools: reused };
+    receipt = { format: 'media-review-setup/v1', version: pins.release, signature, runtime: { node: process.execPath, pwsh }, verification, reusedTools: reused, preparedTools: prepared };
     await atomicJson(path.join(local, 'setup.json'), receipt);
     phase = 'browser';
     const { openReview } = await importFile(path.join(pkg, 'app/server/open.mjs'));

@@ -52,10 +52,10 @@ npm test
 在仓库根目录执行；构建器会将自有源码许可及第三方声明一起带入完整包：
 
 ```sh
-npm run build:skill -- --out release/media-review-0.3.0-beta.5
+npm run build:skill -- --out release/media-review-0.3.0-beta.7
 ```
 
-输出应包含 SKILL.md、README、LICENSE、`skill-package.json`、Windows 启动／安装文件、`scripts/` 和自包含的 `app/`。桌面图标位于`app/dist/brand/media-review-launcher.ico`，多尺寸ICO及品牌说明均登记在清单内；安装和`-InitializeOnly`均为快捷方式设置本安装目录的IconLocation，不引用构建或临时测试目录。包内 `app/` 带构建资源与原生 Node 服务，终端用户不需要 npm 或 node_modules，但仍须安装 Node.js 24+、PowerShell 7+ 及浏览器。
+输出应包含 SKILL.md、README、LICENSE、`skill-package.json`、Windows 启动／安装文件、`scripts/` 和自包含的 `app/`。桌面图标位于`app/dist/brand/media-review-launcher.ico`，多尺寸ICO及品牌说明均登记在清单内；安装和`-InitializeOnly`均为快捷方式设置本安装目录的IconLocation，不引用构建或临时测试目录。包内 `app/` 带构建资源与原生 Node 服务，终端用户不需要 npm 或 node_modules；Agent 通过首次入口准备缺少的 Node.js 24+、PowerShell 7+ 及媒体工具，用户需有受支持的浏览器。
 
 构建器逐项登记文件与 SHA-256；它不证明美感或语义正确，也不执行安装、上传、发布或覆盖旧输出目录。工具／模型、本机绑定、用户媒体、用户意见、恢复缓存和实例身份不进入安装包。唯一随包音频是明确标注为合成语音的 `assets/setup-speech.wav`，用于首次使用的真实字幕自检；自检生成的临时音轨与字幕会清理。
 

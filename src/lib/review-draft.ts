@@ -1,4 +1,4 @@
-import { parseTime, regionsOf, type FrameReference, type FrameRegion, type Rect, type ReviewKind, type ReviewNote, type ReviewTopic } from './review.ts';
+import { formatTime, parseTime, regionsOf, type FrameReference, type FrameRegion, type Rect, type ReviewKind, type ReviewNote, type ReviewTopic } from './review.ts';
 
 export type TargetMode = 'point' | 'range' | 'frame' | 'whole';
 export interface ReviewDraft {
@@ -19,6 +19,20 @@ export interface ReviewDraft {
 
 export function emptyDraft(): ReviewDraft {
   return { id: null, mode: null, kind: 'modify', topic: null, startText: '', endText: '', text: '', rect: null, frameMs: null, reference: null, snapshot: null };
+}
+
+export function draftMarks(draft: ReviewDraft) {
+  const { mode, startText, endText, frameMs, reference, snapshot, regionSerial } = draft;
+  return { mode, startText, endText, frameMs, reference, snapshot, regionSerial, rect: null, regions: regionsOf(draft) };
+}
+
+// Clearing a range keeps any independently captured frame. Clearing all marks
+// leaves the opinion text, type, topic and stable region numbering intact.
+export function clearedDraftMarks(draft: ReviewDraft, timeOnly = false): ReturnType<typeof draftMarks> {
+  if (timeOnly && draft.frameMs !== null && regionsOf(draft).length) {
+    return { ...draftMarks(draft), mode: 'frame', startText: formatTime(draft.frameMs), endText: '' };
+  }
+  return { mode: null, startText: '', endText: '', frameMs: null, reference: null, snapshot: null, rect: null, regions: [], regionSerial: draft.regionSerial };
 }
 
 export function hasDraftWork(draft: ReviewDraft): boolean {

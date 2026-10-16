@@ -1,10 +1,10 @@
 # Windows 安装与首次校对
 
-本说明对应 **0.3.0-beta.6 Windows 预发布版**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.6)下载完整 ZIP 及校验文件。本版补齐由 Agent 负责的首次下载、配置、真实字幕测试和开页；此前的标注、版本返修、逐条复核与小电视图标继续保留。完整包包含 `skill-package.json`、`app/`、`scripts/`、SKILL.md、README 和安装入口。宿主若只安装仓库的整个 `skill/`，首次入口会自动取得对应版本的完整包；旧安装不会被静默升级。
+本说明对应 **0.3.0-beta.7 Windows 预发布版**，可从[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.7)下载完整 ZIP 及校验文件。本版补齐由 Agent 负责的首次下载、配置、真实字幕测试和开页；此前的标注、版本返修、逐条复核与小电视图标继续保留。完整包包含 `skill-package.json`、`app/`、`scripts/`、SKILL.md、README 和安装入口。宿主若只安装仓库的整个 `skill/`，首次入口会自动取得对应版本的完整包；旧安装不会被静默升级。
 
 ## 由 Agent 完成首次准备
 
-自动准备面向 Windows 10/11 x64、有本机命令权限的 Agent 和 Edge／Chrome。首次需要联网；用户不用先安装 Node.js、PowerShell、识别器或模型。
+自动准备面向 Windows 10/11 x64、有本机命令权限的 Agent 和 Edge／Chrome。Agent 先说明可能需要联网下载什么，再检查本机，只补缺少或失效的组件；用户不用先安装 Node.js、PowerShell、识别器或模型。之后打开先检查实际路径和能否运行，可用工具、模型与匹配的字幕实测结果直接复用，不会每次重装。
 
 已经安装 Skill 后，让 Agent 运行 `scripts/first-use.cmd`。它会取得完整应用（如果宿主只装了仓库的 skill 目录）、复用已有工具、下载缺少的固定版本、验证文件、实测中文字幕，然后创建桌面入口并打开网页。缺少 Node.js 24 或 PowerShell 7 时使用便携版本，不调用 Windows PowerShell 5.1、不修改系统 PATH，也不要求管理员。
 

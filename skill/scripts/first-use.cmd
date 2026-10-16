@@ -5,10 +5,7 @@ if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" goto unsupported
 if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" goto unsupported
 if /i not "%PROCESSOR_ARCHITECTURE%"=="AMD64" if /i not "%PROCESSOR_ARCHITEW6432%"=="AMD64" goto unsupported
 node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 24 ? 0 : 1)" >nul 2>nul
-if not errorlevel 1 (
-  node "%~dp0setup.mjs" %*
-  exit /b
-)
+if not errorlevel 1 goto system_node
 set "MR_DATA=%USERPROFILE%\.media-review-desk"
 if defined MEDIA_REVIEW_DATA_DIR set "MR_DATA=%MEDIA_REVIEW_DATA_DIR%"
 set "MR_NODE=%MR_DATA%\runtime\node-24.16.0\node.exe"
@@ -20,7 +17,8 @@ set "MR_TEMP=%TEMP%\media-review-node-%RANDOM%-%RANDOM%"
 if exist "%MR_TEMP%" exit /b 1
 mkdir "%MR_TEMP%"
 if errorlevel 1 exit /b 1
-echo [Media Review] Preparing the private Node.js runtime...
+echo [Media Review] Node.js is missing. Internet access is needed to download this runtime.
+echo [Media Review] It will be stored locally, checked and reused on later launches, not reinstalled each time.
 "%SystemRoot%\System32\curl.exe" --fail --location --silent --show-error --proto =https --proto-redir =https --connect-timeout 15 --max-time 45 --speed-limit 8192 --speed-time 15 --max-filesize 120000000 --output "%MR_TEMP%\node.exe" "https://nodejs.org/download/release/v24.16.0/win-x64/node.exe"
 if errorlevel 1 goto fallback
 :verify
@@ -44,7 +42,10 @@ if errorlevel 1 goto failed
 goto verify
 :ready
 "%MR_NODE%" "%~dp0setup.mjs" %*
-exit /b
+exit /b %ERRORLEVEL%
+:system_node
+node "%~dp0setup.mjs" %*
+exit /b %ERRORLEVEL%
 :failed
 echo [Media Review] Node.js download or verification failed. Ask the Agent to retry this entry after checking the network.
 if exist "%MR_TEMP%\node.exe" del "%MR_TEMP%\node.exe"
