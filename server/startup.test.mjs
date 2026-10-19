@@ -59,4 +59,11 @@ test('10个独立进程跨两个安装副本并发冷启动，只启动1个有�
   }
   for (const root of [roots[1], roots[0], roots[1]]) assert.equal((await invoke(root, files[0])).opened.reused, true);
   assert.equal(pids.size, 1);
+  const incompatible = await copy('incompatible-version');
+  const runtime = path.join(incompatible, 'server/runtime.mjs');
+  await fs.writeFile(runtime, (await fs.readFile(runtime, 'utf8')).replace(`export const SERVICE_PROTOCOL = ${SERVICE_PROTOCOL};`, `export const SERVICE_PROTOCOL = ${SERVICE_PROTOCOL + 1};`));
+  await assert.rejects(invoke(incompatible, files[0]), /另一版本仍在运行/u);
+  assert.equal(pids.size, 1, 'incompatible caller must not start another service');
+  const after = await (await fetch(endpoint + '/api/health')).json();
+  assert.equal(after.runtimeId, health.runtimeId, 'existing service remains live');
 });

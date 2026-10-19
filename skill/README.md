@@ -2,7 +2,7 @@
 
 Agent出片后主动送到本机音视频校对室并排队自检；你回来后从任务列表接手，按时间或画面位置留下意见，再交回Agent返修。校对室本身不改写原片，也能审阅其他软件制作的成片。
 
-这是 **0.3.0-beta.10 Windows 预发布完整包**，包含连续标注、逐条返修与新版复核。[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.10)提供完整 ZIP 和校验文件；旧版安装不会自动更新，升级请先保存、备份并核对新入口。
+这是 **0.3.0-beta.11 Windows 预发布完整包**，包含连续标注、逐条返修与新版复核。[本版发布页](https://github.com/Ww-Cooooo/media-review/releases/tag/v0.3.0-beta.11)提供完整 ZIP 和校验文件；旧版安装不会自动更新，升级请先保存、备份并核对新入口。
 
 ## 边看边记意见
 

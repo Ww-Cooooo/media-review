@@ -81,7 +81,7 @@ export async function prepare(args = process.argv.slice(2)) {
   if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('请通过 scripts/first-use.cmd 自动准备 Node.js 24。');
   if (args.includes('--bootstrap-node')) return stableBootstrap(args);
   const flags = new Set(['--no-browser', '--skip-page-launcher', '--install', '--verify']);
-  const values = new Set(['--destination', '--desktop-dir', '--data-dir', '--ffmpeg', '--whisper', '--model']);
+  const values = new Set(['--destination', '--desktop-dir', '--desktop-name', '--data-dir', '--ffmpeg', '--whisper', '--model']);
   const options = {};
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
@@ -180,6 +180,7 @@ export async function prepare(args = process.argv.slice(2)) {
       installArgs.push('-Destination', target); options.installedTo = target;
     } else installArgs.push('-InitializeOnly');
     if (options['--desktop-dir']) installArgs.push('-DesktopDirectory', path.resolve(options['--desktop-dir']));
+    if (options['--desktop-name']) installArgs.push('-DesktopName', options['--desktop-name']);
     if (options['--skip-page-launcher']) installArgs.push('-SkipPageLauncher');
     await run(pwsh, installArgs, { timeout: 120_000, env: { ...process.env, PATH: `${path.dirname(process.execPath)};${path.dirname(pwsh)};${process.env.PATH ?? ''}` } });
     if (options.installedTo) pkg = options.installedTo;
